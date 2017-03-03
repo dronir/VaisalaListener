@@ -24,23 +24,28 @@ def parse_data(raw_data):
     raw_data = raw_data.strip("()")
     data = raw_data.split(";")
     out = {}
+    time = ""
+    date = "" 
     for pair in data:
         key,value = pair.split(":")
         if key == "S":
             out["station"] = value
         elif key == "D":
-            out["date"] = value
+            date = value
         elif key == "T":
-            out["time"] = value
+            time = value
         else:
             out[key] = value
-    if not ("date" in out and "time" in out):
+    if not (time and date):
         raise ValueError("Date or time not present.")
+    out["datetime"] = datetime.strptime("{} {}".format(date, time), "%y%m%d %H%M%S")
     return out
 
 def save_data(parsed_data):
     # TODO
     print(parsed_data)
+
+
 
 def listen():
     try:
