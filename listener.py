@@ -54,7 +54,7 @@ def listen():
             print("No data received")
             source.close()
             return
-        parsed = parse_data(str(data))
+        parsed = parse_data(data.decode("utf-8"))
         save_data(parsed)
 
 if __name__=="__main__":
