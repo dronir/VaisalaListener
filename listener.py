@@ -42,7 +42,7 @@ def parse_data(raw_data):
     return out
 
 def save_data(parsed_data):
-    # TODO
+    # TODO: send data to InfluxDB instance. For now, just print it to show that the listening works.
     print(parsed_data)
 
 
