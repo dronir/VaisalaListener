@@ -2,16 +2,16 @@ import socket
 import time
 from sys import exit
 
-# This program starts a server on port 9092, sending the same piece of XML
-# flight date every second. This can be used as a simple test server for
-# aircraft.py
+
+# This starts a server on the given port and sends out the data string
+# approximately once per second.
 
 DATA = """(S:MAWS;D:170303;T:121500;PA:1013.0)"""
-
+PORT = 42222
 
 def serve():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("localhost", 42222))
+    sock.bind(("localhost", PORT))
     sock.listen(5)
     print("Listening")
     try:
