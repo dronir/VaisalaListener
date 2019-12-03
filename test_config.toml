@@ -4,8 +4,8 @@
 
 host = "localhost"
 port = 8086
-dbname = "vaisalatest"
-batch_size = 10
+database = "vaisalatest"
+batch_size = 3
 backup = true
 backup_dir = "."
 
@@ -13,7 +13,7 @@ backup_dir = "."
 
 host = "localhost"
 port = 42222
-
+timeout = 10
 
 [variables]
 

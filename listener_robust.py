@@ -6,6 +6,7 @@ import sys
 import threading
 import concurrent.futures
 import time
+import telnetlib
 from datetime import datetime
 from queue import SimpleQueue
 
@@ -30,38 +31,65 @@ END_QUEUE = object()
 # InfluxDB uploader
 #
 
-def collect_and_upload(db_config, queue, shutdown, logging):
+def collect_and_upload(config, queue, shutdown, logging):
     """Collect data from queue and upload to InfluxDB or backup."""
     batch = []
-    logging.info("DB: Starting up uploader thread.")
+    logging.info("Uploader: Starting up uploader thread.")
     # Check if there's backup data
     # Try to upload any backup data
 
-    while True:
-        while len(batch) < db_config["batch_size"]:
-            new_item = queue.get()
-            if new_item is END_QUEUE:
-                logging.info("DB: Got END_QUEUE. Starting shutdown.")
-                shutdown.set()
-                break
+    try:
+        ok, status = check_database(config)
+    except Exception as E:
+        logging.error("Uploader: Error:\n{}".format(repr(E)))
+        shutdown.set()
+
+    if ok:
+        logging.info("Uploader: Database connection to {host}:{port} ok.".format(**config))
+    else:
+        logging.error("Uploader: Database connection to {host}:{port} failed.".format(**config))
+
+
+    try:
+        while True:
+            while len(batch) < config["batch_size"]:
+                new_item = queue.get()
+                if new_item is END_QUEUE:
+                    logging.info("Uploader: Got END_QUEUE.")
+                    shutdown.set()
+                    break
+                else:
+                    batch.append(new_item)
+            logging.debug("Uploader: Batch full. Trying to upload.")
+            payload = "\n".join(batch)
+            logging.debug("Uploader: Payload:\n{}".format(payload))
+            success, status = upload_influxdb(config, payload, logging)
+            if success:
+                batch = []
             else:
-                batch.append(new_item)
+                logging.warning("DB: Failed to upload data. Error code: {}".format(status))
+                batch = []
 
-        payload = "\n".join(batch)
-        success, status = upload_influxdb(config, payload)
-        if success:
-            batch = []
-        else:
-            logging.warning("DB: Failed to upload data. Error code: {}".format(status))
-
-        if shutdown.is_set():
-            break
-    logging.info("DB: Uploader thread shutting down.")
+            if shutdown.is_set():
+                break
+    except Exception as E:
+        logging.error("Uploader: Error:\n{}".format(repr(E)))
+        shutdown.set()
+    logging.info("Uploader: Shutting down.")
 
 
-def upload_influxdb(config, payload, shutdown):
+def upload_influxdb(config, payload, logging):
     upload_url = build_http_url(config, "write")
-    return False, -1
+    params = {
+        "db" : config["database"]
+    }
+    logging.debug("DB: {}".format(upload_url))
+    r = requests.post(upload_url, data=payload, params=params)
+
+    if r.status_code == 204:
+        return True, 204
+    else:
+        return False, r.status_code
 
 
 def build_http_url(config, path):
@@ -94,24 +122,37 @@ def listen(config, queue, shutdown, logging):
     listener_config = config["vaisala"]
     logging.info("Listener: Starting up listener thread.")
     try:
-        source = telnetlib.Telnet(listener_config["host"], listener_config["port"], 60)
-    except:
+        source = telnetlib.Telnet(listener_config["host"], listener_config["port"], listener_config["timeout"])
+    except Exception as E:
         logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**listener_config))
+        logging.error("{}".format(repr(E)))
         queue.put(END_QUEUE)
         return False
     else:
         logging.info("Listener: Connected to Vaisala computer at {host}:{port}".format(**listener_config))
 
-    while True:
-        if shutdown.is_set():
-            break
-        data = source.read_until(b')', 60)
-        if not data:
-            logging.error("Listener: Timeout. No data received from Vaisala computer.")
-            break
-        parsed = parse_data(config["variables"], data.decode("utf-8"))
-        logging.info(parsed)
-        queue.put(parsed)
+    try:
+        while True:
+            if shutdown.is_set():
+                break
+            try:
+                data = source.read_until(b')').decode("utf-8")
+            except EOFError as E:
+                logging.error("Listener: Connection to Vaisala broadcast interrupted.")
+                source.close()
+                break
+            if not data:
+                logging.error("Listener: Timeout. No data received from Vaisala computer.")
+                break
+            try:
+                parsed = parse_data(config["variables"], data)
+            except Exception as E:
+                logging.error("Listener: Parse error:\n{}".format(repr(E)))
+                break
+            queue.put(parsed)
+    except Exception as E:
+        logging.error("Listener: Error:\n{}".format(repr(E)))
+    logging.info("Listener: Shutting down.")
     queue.put(END_QUEUE)
     source.close()
     return True
@@ -126,7 +167,7 @@ def str_from_dict(data):
 
 def datetime_to_ns(dt):
     """Convert datetime to nanoseconds from epoch."""
-    time_s = time.mktime(time_dt.timetuple())
+    time_s = time.mktime(dt.timetuple())
     return int(time_s * 1e9)
 
 
@@ -142,26 +183,18 @@ def parse_data(config, raw_data):
     data = raw_data.split(";")
     point = {}
     fields = {}
-
     for pair in data:
-        key,value = pair.split(":")
-        if key == "S":
-            tags["station"] = value
-        elif key == "D":
+        key, value = pair.split(":")
+        if key == "D":
             date_str = value
         elif key == "T":
             time_str = value
         elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M", "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
             fields[key] = value
-        else: pass
-    if not (time and date):
-        raise ValueError("Date or time not present.")
-
     time_ns = get_time_ns(date_str, time_str)
     tags = config["tags"]
     tag_str = str_from_dict(tags)
     field_str = str_from_dict(fields)
-
     return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
 
 
@@ -173,24 +206,9 @@ def parse_data(config, raw_data):
 def main(config):
     log_format = "%(asctime)s: %(message)s"
     logging.basicConfig(format=log_format, level=logging.INFO, datefmt="%H:%M:%S")
-    try:
-        db_up, db_status = check_database(config["database"])
-    except requests.ConnectionError as E:
-        logging.warning("Unable to connect to database at {host}:{port}.".format(**config["database"]))
-        db_up = False
-        db_status = -1
-    except Exception as E:
-        logging.error("An unknown error occured when trying to connect to database at {host}:{port}".format(**config["database"]))
-        logging.error("Description: " + repr(E))
-        db_up = False
-        db_status = -2
-    else:
-        logging.info("Database connection to {host}:{port} ok.".format(**config["database"]))
 
     shutdown = threading.Event()
     data_queue = SimpleQueue()
-
-
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as thread_pool:
@@ -199,9 +217,9 @@ def main(config):
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         shutdown.set()
-        logging.info("Shutting down Vaisala listener thread.")
+        #logging.info("Main: Shutting down Vaisala listener thread.")
         # join listener thread
-        logging.info("Shutting down InfluxDB uploader thread.")
+        #logging.info("Shutting down InfluxDB uploader thread.")
         # join
 
 
