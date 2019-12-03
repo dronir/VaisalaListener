@@ -1,0 +1,29 @@
+# Test config file for robust Vaisala listener.
+
+[database]
+
+host = "localhost"
+port = 8086
+dbname = "vaisalatest"
+batch_size = 10
+backup = true
+backup_dir = "."
+
+[vaisala]
+
+host = "localhost"
+port = 42222
+
+
+[variables]
+
+TAAVG1M = "temperature"
+PR = "pressure"
+WD = "wind_dir"
+WS = "wind_speed"
+SNOWDEPTH = "snow_depth"
+# TODO: add the rest
+
+[variables.tags]
+
+station = "vaisala"
