@@ -7,7 +7,7 @@ from datetime import datetime
 # flight date every second. This can be used as a simple test server for
 # aircraft.py
 
-LINE_TEMPLATE = """(S:MAWS;D:{};T:{};TAAVG1M:{};PA:{:.1d})"""
+LINE_TEMPLATE = """(S:MAWS;D:{};T:{};TAAVG1M:{};PA:{:.1f})"""
 
 
 def create_data():
@@ -24,10 +24,8 @@ def serve():
     log_format = "%(asctime)s: %(message)s"
     logging.basicConfig(format=log_format, level=logging.INFO, datefmt="%H:%M:%S")
 
-    hostName = socket.gethostbyname("0.0.0.0")
-    logging.info(hostName)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind((hostName, 42222))
+    sock.bind(("localhost", 42222))
     sock.listen(5)
     logging.info("Listening...")
     try:
@@ -46,7 +44,7 @@ def serve():
                 time.sleep(1.0)
     except KeyboardInterrupt:
         sock.close()
-    except e:
+    except Exception as E:
         logging.error("Unknown error:\n{}".format(repr(E)))
         sock.close()
 
