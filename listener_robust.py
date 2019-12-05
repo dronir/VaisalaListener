@@ -240,3 +240,24 @@ def test_url_builder():
     }
     url = build_http_url(config, "test")
     assert url == "http://localhost:80/test"
+
+
+
+def test_str_from_dict():
+    params = {
+        "foo" : 80,
+        "bar" : "test",
+        "baz" : 1.2
+    }
+    s = str_from_dict(params)
+
+    # Dict has no guaranteed order (though in practice we get the first one)
+    alternatives = [
+        "foo=80,bar=test,baz=1.2",
+        "foo=80,baz=1.2,bar=test",
+        "bar=test,foo=80,baz=1.2",
+        "bar=test,baz=1.2,foo=80",
+        "baz=1.2,foo=80,bar=test",
+        "baz=1.2,bar=test,foo=80"
+    ]
+    assert s in alternatives
