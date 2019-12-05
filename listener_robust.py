@@ -226,3 +226,17 @@ def main(config):
 
 if __name__=="__main__":
     main(load_config(sys.argv[1]))
+
+
+
+###
+### TESTS
+###
+
+def test_url_builder():
+    config = {
+    "host" : "localhost",
+    "port" : 80
+    }
+    url = build_http_url(config, "test")
+    assert url == "http://localhost:80/test"
