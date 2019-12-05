@@ -85,7 +85,12 @@ def upload_influxdb(config, payload, logging):
         "db" : config["database"]
     }
     logging.debug("DB: {}".format(upload_url))
-    r = requests.post(upload_url, data=payload, params=params)
+
+    try:
+        r = requests.post(upload_url, data=payload, params=params)
+    except Exception as E:
+        logging.error("DB: Error while trying to upload:\n{}".format(repr(E)))
+        return False, -1
 
     if r.status_code == 204:
         return True, 204
