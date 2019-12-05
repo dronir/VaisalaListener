@@ -7,6 +7,7 @@ import threading
 import concurrent.futures
 import time
 import telnetlib
+import re
 from datetime import datetime
 from queue import SimpleQueue
 
@@ -48,7 +49,6 @@ def collect_and_upload(config, queue, shutdown, logging):
         logging.info("Uploader: Database connection to {host}:{port} ok.".format(**config))
     else:
         logging.error("Uploader: Database connection to {host}:{port} failed.".format(**config))
-
 
     try:
         while True:
@@ -159,8 +159,6 @@ def listen(config, queue, shutdown, logging):
     return True
 
 
-LINE_TEMPLATE = "weather,{tags} {fields} {timestamp}"
-
 def str_from_dict(data):
     """Turn a dict into a string of comma-separated key=value pairs."""
     return ",".join(["{}={}".format(k, v) for (k,v) in data.items()])
@@ -178,8 +176,34 @@ def get_time_ns(date_str, time_str):
     return datetime_to_ns(time_dt)
 
 
+def verify_data(data):
+    """Does data pass various format checks?"""
+    return format_match(data) and has_date(data) and has_time(data)
+
+
+def has_date(data):
+    """Check if data has a date string."""
+    m = re.search(r"D:\d{6}", data)
+    return not (m is None)
+
+
+def has_time(data):
+    """Check if data has a time string."""
+    m = re.search(r"T:\d{6}", data)
+    return not (m is None)
+
+
+def format_match(data):
+    """Check if data string matches expected regular expression."""
+    m = re.fullmatch(r"\(\w+:\w+(;\w+:[\w\.]+)+\)", data)
+    return not (m is None)
+
+
+LINE_TEMPLATE = "weather,{tags} {fields} {timestamp}"
+
 def parse_data(config, raw_data):
     """Parse raw data broadcast string into dictionary."""
+    # TODO: add check
     raw_data = raw_data.strip("()")
     data = raw_data.split(";")
     point = {}
@@ -191,7 +215,7 @@ def parse_data(config, raw_data):
         elif key == "T":
             time_str = value
         elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M", "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
-            fields[key] = value
+            fields[key] = float(value)
     time_ns = get_time_ns(date_str, time_str)
     tags = config["tags"]
     tag_str = str_from_dict(tags)
@@ -261,3 +285,22 @@ def test_str_from_dict():
         "baz=1.2,bar=test,foo=80"
     ]
     assert s in alternatives
+
+
+def test_has_date():
+    assert has_date("(M:FOO;D:140518;B:1.0)")
+    assert has_date("(M:FOO;D:140518;B)")
+    assert not has_date("(M:FOO;D:14018;B:1.0)")
+    assert not has_date("(M:FOO;T:140518;B:1.0)")
+
+def test_has_time():
+    assert has_time("(M:FOO;T:140518;B:1.0)")
+    assert has_time("(M:FOO;T:140518;B)")
+    assert not has_time("(M:FOO;T:14018;B:1.0)")
+    assert not has_time("(M:FOO;D:140518;B:1.0)")
+
+def test_format():
+    assert format_match("(S:FOO;PA:1000;FOO:123)")
+
+def test_data_verify():
+    assert verify_data("(S:FOO;T:101018;D:010128;PA:1000)")
