@@ -53,6 +53,7 @@ def collect_and_upload(config, queue, shutdown, logging):
     try:
         while True:
             while len(batch) < config["batch_size"]:
+                # This will block forever if queue remains empty:
                 new_item = queue.get()
                 if new_item is END_QUEUE:
                     logging.info("Uploader: Got END_QUEUE.")
@@ -60,7 +61,7 @@ def collect_and_upload(config, queue, shutdown, logging):
                     break
                 else:
                     batch.append(new_item)
-            logging.debug("Uploader: Batch full. Trying to upload.")
+            logging.debug("Uploader: Trying to upload batch.")
             payload = "\n".join(batch)
             logging.debug("Uploader: Payload:\n{}".format(payload))
             success, status = upload_influxdb(config, payload, logging)
@@ -68,10 +69,11 @@ def collect_and_upload(config, queue, shutdown, logging):
                 logging.debug("Uploaded: Upload succesful.")
                 batch = []
             else:
-                logging.warning("DB: Failed to upload data. Error code: {}".format(status))
+                logging.warning("Uploader: Failed to upload data. Error code: {}".format(status))
                 batch = []
 
             if shutdown.is_set():
+                logging.info("Uploader: Encountered shutdown request.")
                 break
     except Exception as E:
         logging.error("Uploader: Unexpected error:\n{}".format(repr(E)))
@@ -84,12 +86,12 @@ def upload_influxdb(config, payload, logging):
     params = {
         "db" : config["database"]
     }
-    logging.debug("DB: {}".format(upload_url))
+    logging.debug("Uploader: {}".format(upload_url))
 
     try:
         r = requests.post(upload_url, data=payload, params=params)
     except Exception as E:
-        logging.error("DB: Error while trying to upload:\n{}".format(repr(E)))
+        logging.error("Uploader: Error while trying to upload:\n{}".format(repr(E)))
         return False, -1
 
     if r.status_code == 204:
@@ -140,6 +142,7 @@ def listen(config, queue, shutdown, logging):
     try:
         while True:
             if shutdown.is_set():
+                logging.info("Listener: Encountered shutdown request.")
                 break
             try:
                 data = source.read_until(b')').decode("utf-8")
