@@ -65,6 +65,7 @@ def collect_and_upload(config, queue, shutdown, logging):
             logging.debug("Uploader: Payload:\n{}".format(payload))
             success, status = upload_influxdb(config, payload, logging)
             if success:
+                logging.debug("Uploaded: Upload succesful.")
                 batch = []
             else:
                 logging.warning("DB: Failed to upload data. Error code: {}".format(status))
@@ -73,7 +74,7 @@ def collect_and_upload(config, queue, shutdown, logging):
             if shutdown.is_set():
                 break
     except Exception as E:
-        logging.error("Uploader: Error:\n{}".format(repr(E)))
+        logging.error("Uploader: Unexpected error:\n{}".format(repr(E)))
         shutdown.set()
     logging.info("Uploader: Shutting down.")
 
@@ -168,7 +169,7 @@ def str_from_dict(data):
 def datetime_to_ns(dt):
     """Convert datetime to nanoseconds from epoch."""
     time_s = time.mktime(dt.timetuple())
-    return int(time_s * 1e9)
+    return int(time_s * 1000000000)
 
 
 def get_time_ns(date_str, time_str):
