@@ -35,6 +35,7 @@ END_QUEUE = object()
 def collect_and_upload(config, queue, shutdown, logging):
     """Collect data from queue and upload to InfluxDB or backup."""
     batch = []
+    failed = False
     logging.info("Uploader: Starting up uploader thread.")
     # Check if there's backup data
     # Try to upload any backup data
@@ -66,9 +67,14 @@ def collect_and_upload(config, queue, shutdown, logging):
             logging.debug("Uploader: Payload:\n{}".format(payload))
             success, status = upload_influxdb(config, payload, logging)
             if success:
+                if failed:
+                    # Try to clear backup buffer
+                    failed = False
                 logging.debug("Uploaded: Upload succesful.")
                 batch = []
             else:
+                failed = True
+                # Put batch to backup buffer.
                 logging.warning("Uploader: Failed to upload data. Error code: {}".format(status))
                 batch = []
 
