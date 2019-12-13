@@ -315,6 +315,13 @@ def test_has_time():
 
 def test_format():
     assert format_match("(S:FOO;PA:1000;FOO:123)")
+    assert not format_match("(S:FOO;PA:1000;FOO:123")
+    assert not format_match("S:FOO;PA:1000;FOO:123)")
+    assert not format_match("(S:FOO,PA:1000;FOO:123)")
+
 
 def test_data_verify():
     assert verify_data("(S:FOO;T:101018;D:010128;PA:1000)")
+    assert not verify_data("(S:FOO;T:101018;D:010128;PA:1000")
+    assert not verify_data("S:FOO;T:101018;D:010128;PA:1000)")
+    assert not verify_data("(S:FOO,T:101018;D:010128;PA:1000)")
