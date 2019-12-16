@@ -44,6 +44,8 @@ def serve():
     except Exception as E:
         logging.error("Unknown error:\n{}".format(repr(E)))
         sock.close()
+    finally:
+        sock.close()
 
 if __name__=="__main__":
     serve()
