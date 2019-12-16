@@ -3,9 +3,6 @@ import time
 import logging
 from datetime import datetime
 
-# This program starts a server on port 9092, sending the same piece of XML
-# flight date every second. This can be used as a simple test server for
-# aircraft.py
 
 LINE_TEMPLATE = """(S:MAWS;D:{};T:{};TAAVG1M:{};PA:{:.1f})"""
 
