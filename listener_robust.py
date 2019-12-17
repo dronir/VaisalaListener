@@ -159,12 +159,15 @@ def listen(config, queue, shutdown, logging):
             if not data:
                 logging.error("Listener: Timeout. No data received from Vaisala computer.")
                 break
-            try:
-                parsed = parse_data(config["variables"], data)
-            except Exception as E:
-                logging.error("Listener: Parse error:\n{}".format(repr(E)))
-                break
-            queue.put(parsed)
+            if verify_data(data):
+                try:
+                    parsed = parse_data(config["variables"], data)
+                except Exception as E:
+                    logging.error("Listener: Parse error:\n{}".format(repr(E)))
+                    break
+                queue.put(parsed)
+            else:
+                logging.warning("Listener: format check failed for received data:\n{}".format(data))
     except Exception as E:
         logging.error("Listener: Error:\n{}".format(repr(E)))
     logging.info("Listener: Shutting down.")
