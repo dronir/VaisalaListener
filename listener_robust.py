@@ -274,6 +274,8 @@ if __name__=="__main__":
 ### TESTS
 ###
 
+# Run tests with command line: python -m pytest listener_robust.py
+
 def test_url_builder():
     config = {
     "host" : "localhost",
