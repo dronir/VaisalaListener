@@ -11,31 +11,18 @@ import re
 from datetime import datetime
 from queue import SimpleQueue
 
-# 1. Check if database is up and available
-# 2. Check if there's data in the backup buffer
-#   - If there is, add it to the upload batch
-# 3. Start Vaisala listening thread
-#   - Listen to Vaisala broadcasts
-#   - If Vaisala not available, wait a bit and try again (also warn user)
-#   - Get value from Vaisala, parse it and push into queue
-# 4. Start InfluxDB upload thread
-#   - Get data from queue and put it into the upload batch
-#   - Once the upload batch is large enough, attempt to upload it
-#   - If the upload failed, save it into the backup buffer and set "failed" flag
-#   - If the failed flag is set and an upload succeeds, try to empty the backup buffer
-# 5. If user exits, empty queue (to db or backup) and shut down things cleanly.
 
-
+# A special flag object to push into thread-shared queue to indicate soft shutdown request.
 END_QUEUE = object()
 
 #
 # InfluxDB uploader
 #
 
-def collect_and_upload(config, queue, shutdown, logging):
+def collect_and_upload(config, queue, shutdown):
     """Collect data from queue and upload to InfluxDB or backup."""
     batch = []
-    failed = False
+    has_failed = False
     logging.info("Uploader: Starting up uploader thread.")
     # Check if there's backup data
     # Try to upload any backup data
@@ -62,21 +49,33 @@ def collect_and_upload(config, queue, shutdown, logging):
                     break
                 else:
                     batch.append(new_item)
-            logging.debug("Uploader: Trying to upload batch.")
-            payload = "\n".join(batch)
-            logging.debug("Uploader: Payload:\n{}".format(payload))
-            success, status = upload_influxdb(config, payload, logging)
-            if success:
-                if failed:
-                    # Try to clear backup buffer
-                    failed = False
-                logging.debug("Uploaded: Upload succesful.")
-                batch = []
-            else:
-                failed = True
-                # Put batch to backup buffer.
-                logging.warning("Uploader: Failed to upload data. Error code: {}".format(status))
-                batch = []
+            if len(batch) > 0:
+                logging.debug("Uploader: Trying to upload batch.")
+                payload = "\n".join(batch)
+                logging.debug("Uploader: Payload:\n{}".format(payload))
+                success, status = upload_influxdb(config, payload)
+                if success:
+                    logging.debug("Uploader: Upload succesful.")
+                    batch = []
+                    if has_failed:
+                        logging.info("Uploader: Trying to read backup buffer.")
+                        load_success, batch, E = load_backup(config)
+                        if load_success:
+                            logging.info("Uploader: Loaded {} items from backup.".format(len(batch)))
+                            has_failed = False
+                        else:
+                            logging.error("Uploader: Failed to read backup buffer:\n{}".format(repr(E)))
+
+                else:
+                    logging.error("Uploader: Failed to upload data. Error code: {}".format(status))
+                    has_failed = True
+                    if config["backup"]:
+                        backup_ok = store_backup(config, payload)
+                        if backup_ok:
+                            logging.error("Uploader: Backed up data to {}.".format(config["backup_file"]))
+                        else:
+                            logging.error("Uploader: Failed to back up data to {}".format(config["backup_file"]))
+                    batch = []
 
             if shutdown.is_set():
                 logging.info("Uploader: Encountered shutdown request.")
@@ -87,7 +86,44 @@ def collect_and_upload(config, queue, shutdown, logging):
     logging.info("Uploader: Shutting down.")
 
 
-def upload_influxdb(config, payload, logging):
+
+def store_backup(config, payload):
+    """Store the given payload in a text file.
+
+    `Config` is the "uploader" config subset.
+    """
+    try:
+        with open(config["backup_file"], "a") as f:
+            f.write(payload)
+    except Exception as E:
+        return False, E
+    else:
+        return True, None
+
+
+def load_backup(config):
+    """Retrieve a payload from backup text file.
+
+    `Config` is the "uploader" config subset.
+    """
+    batch = []
+    try:
+        if not exists(config["backup_file"]):
+            return True, [], None
+        with open(config["backup_file"], "r") as f:
+            for line in f:
+                batch.append(line)
+    except Exception as E:
+        return False, [], E
+    else:
+        return True, batch, None
+
+
+def upload_influxdb(config, payload):
+    """Upload given payload to InfluxDB instance.
+
+    `Config` is the "uploader" config subset.
+    """
     upload_url = build_http_url(config, "write")
     params = {
         "db" : config["database"]
@@ -132,18 +168,17 @@ def load_config(filename):
 # Vaisala listener
 #
 
-def listen(config, queue, shutdown, logging):
-    listener_config = config["vaisala"]
+def listen(config, queue, shutdown):
     logging.info("Listener: Starting up listener thread.")
     try:
-        source = telnetlib.Telnet(listener_config["host"], listener_config["port"], listener_config["timeout"])
+        source = telnetlib.Telnet(config["host"], config["port"], config["timeout"])
     except Exception as E:
-        logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**listener_config))
+        logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**config))
         logging.error("{}".format(repr(E)))
         queue.put(END_QUEUE)
         return False
     else:
-        logging.info("Listener: Connected to Vaisala computer at {host}:{port}".format(**listener_config))
+        logging.info("Listener: Connected to Vaisala computer at {host}:{port}".format(**config))
 
     try:
         while True:
@@ -244,18 +279,26 @@ def parse_data(config, raw_data):
 # Main function
 #
 
+log_levels = {
+    "ALL" : logging.DEBUG,
+    "INFO" : logging.INFO,
+    "WARNINGS" : logging.WARNING,
+    "ERRORS" : logging.ERROR
+}
+
 
 def main(config):
     log_format = "%(asctime)s: %(message)s"
-    logging.basicConfig(format=log_format, level=logging.INFO, datefmt="%H:%M:%S")
+    log_lvl = log_levels[config["common"]["debug_level"]]
+    logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
     shutdown = threading.Event()
     data_queue = SimpleQueue()
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as thread_pool:
-            thread_pool.submit(collect_and_upload, config["database"], data_queue, shutdown, logging)
-            thread_pool.submit(listen, config, data_queue, shutdown, logging)
+            thread_pool.submit(collect_and_upload, config["uploader"], data_queue, shutdown)
+            thread_pool.submit(listen, config["vaisala"], data_queue, shutdown)
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         shutdown.set()

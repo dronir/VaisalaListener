@@ -1,13 +1,24 @@
 # Test config file for robust Vaisala listener.
 
-[database]
+[common]
+
+# debug_level can be ALL, INFO, WARNINGS, or ERRORS.
+#  ALL prints debug messages, routine information, warnings and errors.
+#  INFO prints routube information and higher.
+#  WARNINGS prints only warnings and errors.
+#  ERRORS prints only error messages.
+debug_level = "ALL"
+
+
+[uploader]
 
 host = "localhost"
 port = 8086
 database = "vaisalatest"
 batch_size = 3
 backup = true
-backup_dir = "."
+backup_file = "backups.txt"
+
 
 [vaisala]
 
@@ -15,7 +26,8 @@ host = "localhost"
 port = 42222
 timeout = 10
 
-[variables]
+
+[vaisala.variables]
 
 TAAVG1M = "temperature"
 PR = "pressure"
@@ -24,6 +36,7 @@ WS = "wind_speed"
 SNOWDEPTH = "snow_depth"
 # TODO: add the rest
 
-[variables.tags]
+
+[vaisala.tags]
 
 station = "vaisala"
