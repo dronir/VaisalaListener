@@ -9,9 +9,17 @@
 #  ERRORS prints only error messages.
 debug_level = "ALL"
 
+# Source is either "serial" or "network"
+source = "network"
+
+# Broadcast arriving data over network (for Vaisala monitor panel)?
+# This cannot be used together with source = "network".
+broadcast = true
+
 
 [uploader]
 
+# Settings for the InfluxDB database uploader.
 host = "localhost"
 port = 8086
 database = "vaisalatest"
@@ -20,15 +28,32 @@ backup = true
 backup_file = "backups.txt"
 
 
-[vaisala]
+[broadcast]
 
+# These settings are used if common.broadcast is set to true.
+port = 42222
+max_connections = 5
+
+
+[listener.network]
+
+# These settings are used when common.source is set to "network"
 host = "localhost"
 port = 42222
 timeout = 10
 
 
-[vaisala.variables]
+[listener.serial]
 
+# These settings are used when common.source is set to "serial".
+device = "/dev/ttyUSB0"
+timeout = 60
+
+
+[parser.variables]
+
+# These map variable names in the Vaisala broadcast to variables names
+# in the InfluxDB database.
 TAAVG1M = "temperature"
 PR = "pressure"
 WD = "wind_dir"
@@ -37,6 +62,7 @@ SNOWDEPTH = "snow_depth"
 # TODO: add the rest
 
 
-[vaisala.tags]
+[parser.tags]
 
+# Any string variables defined here will be used as tags in the InfluxDB database.
 station = "vaisala"

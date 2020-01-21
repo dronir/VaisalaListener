@@ -31,12 +31,13 @@ def collect_and_upload(config, queue, shutdown):
         ok, status = check_database(config)
     except Exception as E:
         logging.error("Uploader: Error:\n{}".format(repr(E)))
-        shutdown.set()
+        ok = False
 
     if ok:
         logging.info("Uploader: Database connection to {host}:{port} ok.".format(**config))
     else:
         logging.error("Uploader: Database connection to {host}:{port} failed.".format(**config))
+        shutdown.set()
 
     try:
         while True:
@@ -55,13 +56,13 @@ def collect_and_upload(config, queue, shutdown):
                 logging.debug("Uploader: Payload:\n{}".format(payload))
                 success, status = upload_influxdb(config, payload)
                 if success:
-                    logging.debug("Uploader: Upload succesful.")
+                    logging.debug("Uploader: Upload successful.")
                     batch = []
                     if has_failed:
                         logging.info("Uploader: Trying to read backup buffer.")
                         load_success, batch, E = load_backup(config)
                         if load_success:
-                            logging.info("Uploader: Loaded {} items from backup.".format(len(batch)))
+                            logging.info("Uploader: Found {} items in backup.".format(len(batch)))
                             has_failed = False
                         else:
                             logging.error("Uploader: Failed to read backup buffer:\n{}".format(repr(E)))
@@ -115,8 +116,11 @@ def load_backup(config):
                 batch.append(line)
     except Exception as E:
         return False, [], E
-    else:
-        return True, batch, None
+
+    # Clear file
+    with open(config["backup_file"], "w") as f:
+        pass
+    return True, batch, None
 
 
 def upload_influxdb(config, payload):
@@ -161,55 +165,61 @@ def load_config(filename):
     with open(filename, "r") as f:
         return toml.load(f)
 
-
-
-
 #
-# Vaisala listener
+# Vaisala message parser
 #
 
-def listen(config, queue, shutdown):
-    logging.info("Listener: Starting up listener thread.")
-    try:
-        source = telnetlib.Telnet(config["host"], config["port"], config["timeout"])
-    except Exception as E:
-        logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**config))
-        logging.error("{}".format(repr(E)))
-        queue.put(END_QUEUE)
-        return False
-    else:
-        logging.info("Listener: Connected to Vaisala computer at {host}:{port}".format(**config))
+def message_parser(config, parser_queue, upload_queue, shutdown):
+    """Get raw Vaisala data, verity and parse it into an InfluxDB message and pass on.
 
-    try:
-        while True:
-            if shutdown.is_set():
-                logging.info("Listener: Encountered shutdown request.")
-                break
-            try:
-                data = source.read_until(b')').decode("utf-8")
-            except EOFError as E:
-                logging.error("Listener: Connection to Vaisala broadcast interrupted.")
-                source.close()
-                break
-            if not data:
-                logging.error("Listener: Timeout. No data received from Vaisala computer.")
-                break
+    Gets raw data from parser_queue.
+    Checks the format.
+    If the checks pass, parses the raw data into the InfluxDB line format.
+    Then puts the resulting string into upload_queue.
+    """
+    logging.info("Parser: Starting thread.")
+    while True:
+        if shutdown.is_set():
+            logging.info("Parser: Encountered shutdown request.")
+            break
+        data = parser_queue.get()
+        if data == END_QUEUE:
+            logging.info("Parser: Encountered END_QUEUE.")
+            shutdown.set()
+            break
+        try:
             if verify_data(data):
-                try:
-                    parsed = parse_data(config["variables"], data)
-                except Exception as E:
-                    logging.error("Listener: Parse error:\n{}".format(repr(E)))
-                    break
-                queue.put(parsed)
+                parsed = parse_data(config["variables"], data)
+                upload_queue.put(parsed)
             else:
-                logging.warning("Listener: format check failed for received data:\n{}".format(data))
-    except Exception as E:
-        logging.error("Listener: Error:\n{}".format(repr(E)))
-    logging.info("Listener: Shutting down.")
-    queue.put(END_QUEUE)
-    source.close()
-    return True
+                logging.warning("Parser: Format check failed for received data:\n{}".format(data))
+        except Exception as E:
+            logging.error("Parser: Unexpected error:\n{}".format(repr(E)))
+    logging.info("Parser: Shutting down.")
 
+LINE_TEMPLATE = "weather,{tags} {fields} {timestamp}"
+
+def parse_data(config, raw_data):
+    """Parse raw data broadcast string into dictionary.
+    Data is assumed to be in valid form (i.e. `verify_data` returns True on it).
+    """
+    raw_data = raw_data.strip("()")
+    data = raw_data.split(";")
+    point = {}
+    fields = {}
+    for pair in data:
+        key, value = pair.split(":")
+        if key == "D":
+            date_str = value
+        elif key == "T":
+            time_str = value
+        elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M", "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
+            fields[key] = float(value)
+    time_ns = get_time_ns(date_str, time_str)
+    tags = config["tags"]
+    tag_str = str_from_dict(tags)
+    field_str = str_from_dict(fields)
+    return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
 
 def str_from_dict(data):
     """Turn a dict into a string of comma-separated key=value pairs."""
@@ -250,29 +260,105 @@ def format_match(data):
     m = re.fullmatch(r"\(\w+:\w+(;\w+:[\w\.]+)+\)", data)
     return not (m is None)
 
+#
+# Broadcast
+#
+def broadcast(config, shutdown):
+    # TODO: Implement
+    pass
 
-LINE_TEMPLATE = "weather,{tags} {fields} {timestamp}"
 
-def parse_data(config, raw_data):
-    """Parse raw data broadcast string into dictionary."""
-    # TODO: add check
-    raw_data = raw_data.strip("()")
-    data = raw_data.split(";")
-    point = {}
-    fields = {}
-    for pair in data:
-        key, value = pair.split(":")
-        if key == "D":
-            date_str = value
-        elif key == "T":
-            time_str = value
-        elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M", "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
-            fields[key] = float(value)
-    time_ns = get_time_ns(date_str, time_str)
-    tags = config["tags"]
-    tag_str = str_from_dict(tags)
-    field_str = str_from_dict(fields)
-    return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
+#
+# Vaisala Serial listener
+#
+
+def serial_listener(config, queue, shutdown):
+    logging.info("Serial: Starting serial listener thread.")
+    ser = connect_serial(config)
+    if ser is None:
+        shutdown.set()
+        return False
+    while True:
+        if ser is None:
+            logging.error("Serial: Not connected to serial device. Trying to reconnect.")
+            ser = connect_serial(config)
+            continue
+        try:
+            str = serial_port.read_until(")", timeout=config.get("timeout", 60))
+        except Exception as E:
+            logging.error("Serial: Error when reading serial device:\n{}".format(repr(E)))
+            logging.info("Serial: Trying to reconnect.")
+            ser.close()
+            ser = connect_serial(config)
+            continue
+        # TODO: get only the part between parenthesis
+        queue.put(str)
+        if shutdown.is_set():
+            logging.info("Serial: Shutdown requested.")
+            break
+    logging.info("Serial: Shutting down.")
+    return True
+
+def connect_serial(config):
+    try:
+        ser = serial.Serial(port=config["device"], baudrate=9600, timeout=config.get("timeout", 60))
+    except Exception as E:
+        logging.error("Serial: Could not open serial device {}:\n{}".format(config["device"], repr(E)))
+        return None
+    else:
+        return ser
+
+
+
+#
+# Vaisala TCP/IP listener
+#
+
+def network_listener(config, parser_queue, shutdown):
+    logging.info("Listener: Starting network listener thread.")
+    source = connect_source(config)
+    if source is None:
+        logging.info("Listener: Shutting down.")
+        shutdown.set()
+        return False
+
+
+    while True:
+        if shutdown.is_set():
+            logging.info("Listener: Encountered shutdown request.")
+            break
+        if source is None:
+            logging.error("Listener: Not connected to listener. Trying to connect.")
+            source = connect_source(config)
+            continue
+        try:
+            data = source.read_until(b')', timeout=config.get("timeout", 10)).decode("utf-8")
+        except EOFError as E:
+            logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
+            source.close()
+            source = connect_source(config)
+        except Exception as E:
+            logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
+        if data:
+            parser_queue.put(data)
+        else:
+            logging.warning("Listener: No data received.")
+
+    logging.info("Listener: Shutting down.")
+    source.close()
+    return True
+
+def connect_source(config):
+    try:
+        source = telnetlib.Telnet(config["host"], config["port"], config.get("timeout", 10))
+    except Exception as E:
+        logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**config))
+        logging.error("{}".format(repr(E)))
+        return None
+    else:
+        logging.info("Listener: Connected to Vaisala computer at {host}:{port}".format(**config))
+        return source
+
 
 
 #
@@ -286,19 +372,38 @@ log_levels = {
     "ERRORS" : logging.ERROR
 }
 
+def watcher(shutdown, parser_queue, upload_queue):
+    while True:
+        if shutdown.is_set():
+            logging.info("Watcher: Shutdown is set. Putting end commands into queues.")
+            parser_queue.put(END_QUEUE)
+            upload_queue.put(END_QUEUE)
+            return
+
 
 def main(config):
     log_format = "%(asctime)s: %(message)s"
-    log_lvl = log_levels[config["common"]["debug_level"]]
+    log_lvl = log_levels[config["common"].get("debug_level", "ALL")]
     logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
     shutdown = threading.Event()
-    data_queue = SimpleQueue()
+    upload_queue = SimpleQueue()
+    parser_queue = SimpleQueue()
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as thread_pool:
-            thread_pool.submit(collect_and_upload, config["uploader"], data_queue, shutdown)
-            thread_pool.submit(listen, config["vaisala"], data_queue, shutdown)
+            thread_pool.submit(watcher, shutdown, parser_queue, upload_queue)
+            thread_pool.submit(collect_and_upload, config["uploader"], upload_queue, shutdown)
+            thread_pool.submit(message_parser, config["parser"], parser_queue, upload_queue, shutdown)
+
+            source = config["common"].get("source", "")
+            if source == "network":
+                thread_pool.submit(network_listener, config["listener"]["network"], parser_queue, shutdown)
+            elif source == "serial":
+                thread_pool.submit(serial_listener, config["listener"]["serial"], parser_queue, shutdown)
+            else:
+                logging.error("Could not determine listener method (serial or network).")
+                shutdown.set()
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         shutdown.set()
