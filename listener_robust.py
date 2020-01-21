@@ -382,7 +382,7 @@ def watcher(shutdown, parser_queue, upload_queue):
 
 
 def main(config):
-    log_format = "%(asctime)s: %(message)s"
+    log_format = "%(asctime)s %(levelname)s %(message)s"
     log_lvl = log_levels[config["common"].get("debug_level", "ALL")]
     logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
