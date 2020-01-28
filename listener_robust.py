@@ -33,10 +33,7 @@ def collect_and_upload(config, queue, shutdown):
         logging.error("Uploader: Error:\n{}".format(repr(E)))
         ok = False
 
-    if ok:
-        logging.info("Uploader: Database connection to {host}:{port} ok.".format(**config))
-    else:
-        logging.error("Uploader: Database connection to {host}:{port} failed.".format(**config))
+    if not ok:
         shutdown.set()
 
     try:
@@ -318,7 +315,7 @@ def network_listener(config, parser_queue, shutdown):
     logging.info("Listener: Starting network listener thread.")
     source = connect_source(config)
     if source is None:
-        logging.info("Listener: Shutting down.")
+        logging.info("Listener: We can't even start. Shutting down.")
         shutdown.set()
         return False
 
@@ -372,10 +369,11 @@ log_levels = {
     "ERRORS" : logging.ERROR
 }
 
-def watcher(shutdown, parser_queue, upload_queue):
+def watchdog(shutdown, parser_queue, upload_queue):
+    logging.info("Watchdog: Starting.")
     while True:
         if shutdown.is_set():
-            logging.info("Watcher: Shutdown is set. Putting end commands into queues.")
+            logging.info("Watchdog: Shutdown is set. Putting end commands into queues.")
             parser_queue.put(END_QUEUE)
             upload_queue.put(END_QUEUE)
             return
@@ -391,8 +389,8 @@ def main(config):
     parser_queue = SimpleQueue()
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as thread_pool:
-            thread_pool.submit(watcher, shutdown, parser_queue, upload_queue)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as thread_pool:
+            thread_pool.submit(watchdog, shutdown, parser_queue, upload_queue)
             thread_pool.submit(collect_and_upload, config["uploader"], upload_queue, shutdown)
             thread_pool.submit(message_parser, config["parser"], parser_queue, upload_queue, shutdown)
 
@@ -407,10 +405,6 @@ def main(config):
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         shutdown.set()
-        #logging.info("Main: Shutting down Vaisala listener thread.")
-        # join listener thread
-        #logging.info("Shutting down InfluxDB uploader thread.")
-        # join
 
 
 if __name__=="__main__":
