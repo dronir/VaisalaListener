@@ -10,7 +10,7 @@ import telnetlib
 import re
 from datetime import datetime
 from queue import SimpleQueue
-
+from os.path import exists
 
 # A special flag object to push into thread-shared queue to indicate soft shutdown request.
 END_QUEUE = object()
@@ -93,6 +93,7 @@ def store_backup(config, payload):
     try:
         with open(config["backup_file"], "a") as f:
             f.write(payload)
+            f.write("\n")
     except Exception as E:
         return False, E
     else:
@@ -110,7 +111,9 @@ def load_backup(config):
             return True, [], None
         with open(config["backup_file"], "r") as f:
             for line in f:
-                batch.append(line)
+                sline = line.strip()
+                if len(sline) > 0:
+                    batch.append(sline)
     except Exception as E:
         return False, [], E
 
@@ -194,7 +197,7 @@ def message_parser(config, parser_queue, upload_queue, shutdown):
             logging.error("Parser: Unexpected error:\n{}".format(repr(E)))
     logging.info("Parser: Shutting down.")
 
-LINE_TEMPLATE = "weather,{tags} {fields} {timestamp}"
+LINE_TEMPLATE = "weather{tags} {fields} {timestamp}"
 
 def parse_data(config, raw_data):
     """Parse raw data broadcast string into dictionary.
@@ -214,7 +217,10 @@ def parse_data(config, raw_data):
             fields[key] = float(value)
     time_ns = get_time_ns(date_str, time_str)
     tags = config.get("tags", {})
-    tag_str = str_from_dict(tags)
+    if tags:
+        tag_str = "," + str_from_dict(tags)
+    else:
+        tag_str = ""
     field_str = str_from_dict(fields)
     return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
 
