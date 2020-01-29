@@ -65,12 +65,12 @@ def collect_and_upload(config, queue, shutdown):
                             logging.error("Uploader: Failed to read backup buffer:\n{}".format(repr(E)))
 
                 else:
-                    logging.error("Uploader: Failed to upload data. Error code: {}".format(status))
+                    logging.error("Uploader: Failed to upload data. Attempting backup. Error code: {}".format(status))
                     has_failed = True
                     if config["backup"]:
                         backup_ok = store_backup(config, payload)
                         if backup_ok:
-                            logging.error("Uploader: Backed up data to {}.".format(config["backup_file"]))
+                            logging.info("Uploader: Backed up data to {}.".format(config["backup_file"]))
                         else:
                             logging.error("Uploader: Failed to back up data to {}".format(config["backup_file"]))
                     batch = []
@@ -213,7 +213,7 @@ def parse_data(config, raw_data):
         elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M", "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
             fields[key] = float(value)
     time_ns = get_time_ns(date_str, time_str)
-    tags = config["tags"]
+    tags = config.get("tags", {})
     tag_str = str_from_dict(tags)
     field_str = str_from_dict(fields)
     return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
