@@ -36,6 +36,12 @@ def collect_and_upload(config, queue, shutdown):
     if not ok:
         shutdown.set()
 
+    backup_ok, batch, E = load_backup(config)
+    if not backup_ok:
+        logging.error("Uploader: Tried to load possible backup data but failed:\n{}".format(repr(E)))
+    if len(batch) > 0:
+        logging.info("Uploader: Loaded {} data points from backup.".format(len(batch)))
+
     try:
         while True:
             while len(batch) < config["batch_size"]:
@@ -65,9 +71,10 @@ def collect_and_upload(config, queue, shutdown):
                             logging.error("Uploader: Failed to read backup buffer:\n{}".format(repr(E)))
 
                 else:
-                    logging.error("Uploader: Failed to upload data. Attempting backup. Error code: {}".format(status))
+                    logging.error("Uploader: Failed to upload data. Error code: {}".format(status))
                     has_failed = True
                     if config["backup"]:
+                        logging.error("Uploader: Attempting backup...")
                         backup_ok = store_backup(config, payload)
                         if backup_ok:
                             logging.info("Uploader: Backed up data to {}.".format(config["backup_file"]))
