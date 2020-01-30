@@ -278,6 +278,23 @@ def broadcast(config, shutdown):
     pass
 
 
+
+#
+# Local writer (TODO: implement fully)
+#
+def write_locally(config, queue_in, queue_out, shutdown):
+    while True:
+        try:
+            item = queue_int.get()
+            queue_out.put(item)
+        except Exception as E:
+            logging.error("Local writer: {}".format(repr(E)))
+        if item == END_QUEUE:
+            break
+        # TODO: Write item to local
+
+
+
 #
 # Vaisala Serial listener
 #

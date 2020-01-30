@@ -7,15 +7,14 @@
 #  INFO prints routube information and higher.
 #  WARNINGS prints only warnings and errors.
 #  ERRORS prints only error messages.
+
 debug_level = "ALL"
-
-# Source is either "serial" or "network"
 source = "network"
-
-# Broadcast arriving data over network (for Vaisala monitor panel)?
-# This cannot be used together with source = "network".
 broadcast = true
 
+
+# SETTINGS FOR THE UPLOADER
+#
 
 [uploader]
 
@@ -28,12 +27,19 @@ backup = true
 backup_file = "backups.txt"
 
 
+
+# SETTINGS FOR LOCAL TCP/IP SERVER
+#
+
 [broadcast]
 
 # These settings are used if common.broadcast is set to true.
 port = 42222
 max_connections = 5
 
+
+# SETTINGS FOR THE LISTENER
+#
 
 [listener.network]
 
@@ -49,6 +55,9 @@ timeout = 10
 device = "/dev/ttyUSB0"
 timeout = 60
 
+
+# SETTINGS FOR THE PARSER
+#
 
 [parser.variables]
 
