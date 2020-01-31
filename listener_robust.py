@@ -1,15 +1,15 @@
 # Robust Vaisala listener, with error handling and backup buffer
-import requests
+
 import toml
 import logging
 import sys
-import threading
-import concurrent.futures
+
+import asyncio
+import aiohttp
+
 import time
-import telnetlib
 import re
 from datetime import datetime
-from queue import SimpleQueue
 from os.path import exists
 
 # A special flag object to push into thread-shared queue to indicate soft shutdown request.
@@ -19,22 +19,14 @@ END_QUEUE = object()
 # InfluxDB uploader
 #
 
-def collect_and_upload(config, queue, shutdown):
+async def uploader(global_config, listener):
     """Collect data from queue and upload to InfluxDB or backup."""
+    config = global_config["uploader"]
     batch = []
     has_failed = False
     logging.info("Uploader: Starting up uploader thread.")
     # Check if there's backup data
     # Try to upload any backup data
-
-    try:
-        ok, status = check_database(config)
-    except Exception as E:
-        logging.error("Uploader: Error:\n{}".format(repr(E)))
-        ok = False
-
-    if not ok:
-        shutdown.set()
 
     backup_ok, batch, E = load_backup(config)
     if not backup_ok:
@@ -42,22 +34,27 @@ def collect_and_upload(config, queue, shutdown):
     if len(batch) > 0:
         logging.info("Uploader: Loaded {} data points from backup.".format(len(batch)))
 
-    try:
+    async with aiohttp.ClientSession() as session:
+        db_ok = await check_database(config, session)
+        if not db_ok:
+            return
+
+        parser = message_parser(global_config, listener)
+
         while True:
             while len(batch) < config["batch_size"]:
                 # This will block forever if queue remains empty:
-                new_item = queue.get()
+                new_item = await parser.__anext__()
                 if new_item is END_QUEUE:
                     logging.info("Uploader: Got END_QUEUE.")
-                    shutdown.set()
-                    break
+                    return
                 else:
                     batch.append(new_item)
             if len(batch) > 0:
                 logging.debug("Uploader: Trying to upload batch.")
                 payload = "\n".join(batch)
                 logging.debug("Uploader: Payload:\n{}".format(payload))
-                success, status = upload_influxdb(config, payload)
+                success = await upload_influxdb(config, session, payload)
                 if success:
                     logging.debug("Uploader: Upload successful.")
                     batch = []
@@ -71,10 +68,9 @@ def collect_and_upload(config, queue, shutdown):
                             logging.error("Uploader: Failed to read backup buffer:\n{}".format(repr(E)))
 
                 else:
-                    logging.error("Uploader: Failed to upload data. Error code: {}".format(status))
                     has_failed = True
                     if config["backup"]:
-                        logging.error("Uploader: Attempting backup...")
+                        logging.error("Uploader: Upload failed. Attempting backup...")
                         backup_ok = store_backup(config, payload)
                         if backup_ok:
                             logging.info("Uploader: Backed up data to {}.".format(config["backup_file"]))
@@ -82,14 +78,30 @@ def collect_and_upload(config, queue, shutdown):
                             logging.error("Uploader: Failed to back up data to {}".format(config["backup_file"]))
                     batch = []
 
-            if shutdown.is_set():
-                logging.info("Uploader: Encountered shutdown request.")
-                break
-    except Exception as E:
-        logging.error("Uploader: Unexpected error:\n{}".format(repr(E)))
-        shutdown.set()
     logging.info("Uploader: Shutting down.")
 
+
+
+async def upload_influxdb(config, session, payload):
+    """Upload given payload to InfluxDB instance.
+
+    `Config` is the "uploader" config subset.
+    """
+    upload_url = build_http_url(config, "write")
+    params = {
+        "db" : config["database"]
+    }
+    logging.debug("Uploader: {}".format(upload_url))
+
+    try:
+        async with session.post(upload_url, params=params, data=payload) as response:
+            if response.status == 204:
+                return True
+            else:
+                logging.error(f"Uploader: Failed to upload. Status code: {response.status}")
+                return False
+    except Exception:
+        return False
 
 
 def store_backup(config, payload):
@@ -130,41 +142,25 @@ def load_backup(config):
     return True, batch, None
 
 
-def upload_influxdb(config, payload):
-    """Upload given payload to InfluxDB instance.
-
-    `Config` is the "uploader" config subset.
-    """
-    upload_url = build_http_url(config, "write")
-    params = {
-        "db" : config["database"]
-    }
-    logging.debug("Uploader: {}".format(upload_url))
-
-    try:
-        r = requests.post(upload_url, data=payload, params=params)
-    except Exception as E:
-        logging.error("Uploader: Error while trying to upload:\n{}".format(repr(E)))
-        return False, -1
-
-    if r.status_code == 204:
-        return True, 204
-    else:
-        return False, r.status_code
 
 
 def build_http_url(config, path):
     return "http://{host}:{port}/{path}".format(host=config["host"], port=config["port"], path=path)
 
 
-def check_database(config):
+async def check_database(config, session):
     """Ask InfluxDB database if it's up and running."""
     URL = build_http_url(config, "ping")
-    r = requests.get(URL)
-    if r.status_code == 204:
-        return True, r.status_code
-    else:
-        return False, r.status_code
+    try:
+        async with session.get(URL) as response:
+            if response.status == 204:
+                return True
+            else:
+                logging.error(f"Uploader: Data. Status code: {response.status}")
+                return False
+    except aiohttp.client_exceptions.ClientConnectorError:
+        logging.error(f"Uploader: could not connect to InfluxDB server.")
+        return False
 
 
 def load_config(filename):
@@ -176,7 +172,7 @@ def load_config(filename):
 # Vaisala message parser
 #
 
-def message_parser(config, parser_queue, upload_queue, shutdown):
+async def message_parser(config, listener):
     """Get raw Vaisala data, verity and parse it into an InfluxDB message and pass on.
 
     Gets raw data from parser_queue.
@@ -185,23 +181,23 @@ def message_parser(config, parser_queue, upload_queue, shutdown):
     Then puts the resulting string into upload_queue.
     """
     logging.info("Parser: Starting thread.")
+    my_config =  config["parser"]
     while True:
-        if shutdown.is_set():
-            logging.info("Parser: Encountered shutdown request.")
-            break
-        data = parser_queue.get()
-        if data == END_QUEUE:
-            logging.info("Parser: Encountered END_QUEUE.")
-            shutdown.set()
-            break
-        try:
-            if verify_data(data):
-                parsed = parse_data(config["variables"], data)
-                upload_queue.put(parsed)
-            else:
-                logging.warning("Parser: Format check failed for received data:\n{}".format(data))
-        except Exception as E:
-            logging.error("Parser: Unexpected error:\n{}".format(repr(E)))
+        async for data in broadcaster(config, listener):
+            if data == END_QUEUE:
+                logging.info("Parser: Encountered END_QUEUE.")
+                shutdown.set()
+                break
+            try:
+                if verify_data(data):
+                    parsed = parse_data(my_config, data)
+                    yield parsed
+                else:
+                    logging.warning("Parser: Format check failed for received data:\n{}".format(data))
+            except Exception as E:
+                logging.error("Parser: Unexpected error:\n{}".format(repr(E)))
+        logging.warning("Parser: Data stream ended.")
+        await asyncio.sleep(1)
     logging.info("Parser: Shutting down.")
 
 LINE_TEMPLATE = "weather{tags} {fields} {timestamp}"
@@ -270,36 +266,54 @@ def format_match(data):
     m = re.fullmatch(r"\(\w+:\w+(;\w+:[\w\.]+)+\)", data)
     return not (m is None)
 
+
+
 #
 # Broadcast
 #
-def broadcast(config, shutdown):
-    # TODO: Implement
-    pass
+async def broadcaster(config, listener):
+    while True:
+        async for data in writer(config, listener):
+            # TODO All server stuff goes here
+            yield data
 
 
 
 #
 # Local writer (TODO: implement fully)
 #
-def write_locally(config, queue_in, queue_out, shutdown):
+async def writer(config, listener):
     while True:
         try:
-            item = queue_int.get()
-            queue_out.put(item)
+            async for item in listener(config):
+                logging.debug(f"Writer: Got data: {item}")
+                # TODO: Write item to local
+                yield item
+        except asyncio.CancelledError:
+            raise asyncio.CancelledError
         except Exception as E:
-            logging.error("Local writer: {}".format(repr(E)))
-        if item == END_QUEUE:
-            break
-        # TODO: Write item to local
+            logging.error(f"Writer: {repr(E)}")
+        await asyncio.sleep(1)
 
+
+
+#
+# Debug outputter
+#
+async def debug_output(config, listener):
+    while True:
+        async for item in message_parser(config, listener):
+            if item == END_QUEUE:
+                logging.info("End of pipe got END_QUEUE.")
+                return
+            logging.debug(f"End of pipe: {item}")
 
 
 #
 # Vaisala Serial listener
 #
 
-def serial_listener(config, queue, shutdown):
+async def serial_listener(config, queue, shutdown):
     logging.info("Serial: Starting serial listener thread.")
     ser = connect_serial(config)
     if ser is None:
@@ -341,50 +355,53 @@ def connect_serial(config):
 # Vaisala TCP/IP listener
 #
 
-def network_listener(config, parser_queue, shutdown):
+async def network_listener(config):
+    my_config = config["listener"]["network"]
     logging.info("Listener: Starting network listener thread.")
-    source = connect_source(config)
+    source, writer = await connect_source(my_config)
     if source is None:
         logging.info("Listener: We can't even start. Shutting down.")
-        shutdown.set()
-        return False
+        raise asyncio.CancelledError()
 
 
     while True:
-        if shutdown.is_set():
-            logging.info("Listener: Encountered shutdown request.")
-            break
         if source is None:
             logging.error("Listener: Not connected to listener. Trying to connect.")
-            source = connect_source(config)
+            source, writer = await connect_source(my_config)
+            if source == None:
+                # Still failing, wait for a while before trying again
+                await asyncio.sleep(my_config.get("timeout", 2))
             continue
         try:
-            data = source.read_until(b')', timeout=config.get("timeout", 10)).decode("utf-8")
+            data = await source.readuntil(b')')
+            data = data.decode("utf-8")
+        except asyncio.CancelledError:
+            break
         except EOFError as E:
             logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
-            source.close()
-            source = connect_source(config)
+            writer.close()
+            source,writer = await connect_source(my_config)
         except Exception as E:
             logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
         if data:
-            parser_queue.put(data)
+            yield data
         else:
             logging.warning("Listener: No data received.")
-
     logging.info("Listener: Shutting down.")
-    source.close()
-    return True
+    writer.close()
+    raise asyncio.CancelledError()
 
-def connect_source(config):
+
+async def connect_source(config):
     try:
-        source = telnetlib.Telnet(config["host"], config["port"], config.get("timeout", 10))
+        reader, writer = await asyncio.open_connection(config["host"], config["port"])
     except Exception as E:
         logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**config))
         logging.error("{}".format(repr(E)))
-        return None
+        return None, None
     else:
         logging.info("Listener: Connected to Vaisala computer at {host}:{port}".format(**config))
-        return source
+        return reader, writer
 
 
 
@@ -399,46 +416,30 @@ log_levels = {
     "ERRORS" : logging.ERROR
 }
 
-def watchdog(shutdown, parser_queue, upload_queue):
-    logging.info("Watchdog: Starting.")
-    while True:
-        if shutdown.is_set():
-            logging.info("Watchdog: Shutdown is set. Putting end commands into queues.")
-            parser_queue.put(END_QUEUE)
-            upload_queue.put(END_QUEUE)
-            return
 
 
-def main(config):
+
+async def main(config):
     log_format = "%(asctime)s %(levelname)s %(message)s"
     log_lvl = log_levels[config["common"].get("debug_level", "ALL")]
     logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
-    shutdown = threading.Event()
-    upload_queue = SimpleQueue()
-    parser_queue = SimpleQueue()
-
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as thread_pool:
-            thread_pool.submit(watchdog, shutdown, parser_queue, upload_queue)
-            thread_pool.submit(collect_and_upload, config["uploader"], upload_queue, shutdown)
-            thread_pool.submit(message_parser, config["parser"], parser_queue, upload_queue, shutdown)
-
-            source = config["common"].get("source", "")
-            if source == "network":
-                thread_pool.submit(network_listener, config["listener"]["network"], parser_queue, shutdown)
-            elif source == "serial":
-                thread_pool.submit(serial_listener, config["listener"]["serial"], parser_queue, shutdown)
-            else:
-                logging.error("Could not determine listener method (serial or network).")
-                shutdown.set()
+        await uploader(config, network_listener)
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
-        shutdown.set()
+        loop = asyncio.get_event_loop()
+        loop.stop()
 
 
 if __name__=="__main__":
-    main(load_config(sys.argv[1]))
+    config = load_config(sys.argv[1])
+    try:
+        asyncio.run(main(config))
+    except asyncio.CancelledError:
+        logging.info("Main task cancelled.")
+    except KeyboardInterrupt:
+        logging.info("User requested shutdown.")
 
 
 
