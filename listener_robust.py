@@ -30,9 +30,9 @@ async def uploader(global_config, listener):
 
     backup_ok, batch, E = load_backup(config)
     if not backup_ok:
-        logging.error("Uploader: Tried to load possible backup data but failed:\n{}".format(repr(E)))
+        logging.error(f"Uploader: Tried to load possible backup data but failed:\n{repr(E)}")
     if len(batch) > 0:
-        logging.info("Uploader: Loaded {} data points from backup.".format(len(batch)))
+        logging.info(f"Uploader: Loaded {len(batch)} data points from backup.")
 
     async with aiohttp.ClientSession() as session:
         db_ok = await check_database(config, session)
@@ -62,10 +62,10 @@ async def uploader(global_config, listener):
                         logging.info("Uploader: Trying to read backup buffer.")
                         load_success, batch, E = load_backup(config)
                         if load_success:
-                            logging.info("Uploader: Found {} items in backup.".format(len(batch)))
+                            logging.info(f"Uploader: Found {len(batch)} items in backup.")
                             has_failed = False
                         else:
-                            logging.error("Uploader: Failed to read backup buffer:\n{}".format(repr(E)))
+                            logging.error(f"Uploader: Failed to read backup buffer:\n{repr(E)}")
 
                 else:
                     has_failed = True
@@ -73,9 +73,9 @@ async def uploader(global_config, listener):
                         logging.error("Uploader: Upload failed. Attempting backup...")
                         backup_ok = store_backup(config, payload)
                         if backup_ok:
-                            logging.info("Uploader: Backed up data to {}.".format(config["backup_file"]))
+                            logging.info(f"Uploader: Backed up data to {config["backup_file"]}.")
                         else:
-                            logging.error("Uploader: Failed to back up data to {}".format(config["backup_file"]))
+                            logging.error(f"Uploader: Failed to back up data to {config["backup_file"]}")
                     batch = []
 
     logging.info("Uploader: Shutting down.")
@@ -91,7 +91,7 @@ async def upload_influxdb(config, session, payload):
     params = {
         "db" : config["database"]
     }
-    logging.debug("Uploader: {}".format(upload_url))
+    logging.debug(f"Uploader: Trying to upload with url {upload_url}")
 
     try:
         async with session.post(upload_url, params=params, data=payload) as response:
@@ -101,6 +101,7 @@ async def upload_influxdb(config, session, payload):
                 logging.error(f"Uploader: Failed to upload. Status code: {response.status}")
                 return False
     except Exception:
+        logging.error(f"Uploader: Exception while uploading:\n{repr(E)}")
         return False
 
 
@@ -315,32 +316,29 @@ async def debug_output(config, listener):
 
 async def serial_listener(config, queue, shutdown):
     logging.info("Serial: Starting serial listener thread.")
-    ser = connect_serial(config)
-    if ser is None:
-        shutdown.set()
-        return False
+    ser = await connect_serial(config)
     while True:
         if ser is None:
             logging.error("Serial: Not connected to serial device. Trying to reconnect.")
-            ser = connect_serial(config)
+            ser = await connect_serial(config)
+            await asyncio.sleep(1)
             continue
         try:
-            str = serial_port.read_until(")", timeout=config.get("timeout", 60))
+            str = await serial_port.read_until(")", timeout=config.get("timeout", 60))
+        except asyncio.CancelledError:
+            break
         except Exception as E:
             logging.error("Serial: Error when reading serial device:\n{}".format(repr(E)))
             logging.info("Serial: Trying to reconnect.")
             ser.close()
-            ser = connect_serial(config)
+            ser = await connect_serial(config)
             continue
         # TODO: get only the part between parenthesis
-        queue.put(str)
-        if shutdown.is_set():
-            logging.info("Serial: Shutdown requested.")
-            break
+        yield str
     logging.info("Serial: Shutting down.")
-    return True
+    raise asyncio.CancelledError()
 
-def connect_serial(config):
+async def connect_serial(config):
     try:
         ser = serial.Serial(port=config["device"], baudrate=9600, timeout=config.get("timeout", 60))
     except Exception as E:
