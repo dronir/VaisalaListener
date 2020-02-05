@@ -25,9 +25,8 @@ async def uploader(global_config, listener):
     batch = []
     has_failed = False
     logging.info("Uploader: Starting up uploader thread.")
-    # Check if there's backup data
-    # Try to upload any backup data
 
+    # Check if there's backup data from previous runs
     backup_ok, batch, E = load_backup(config)
     if not backup_ok:
         logging.error(f"Uploader: Tried to load possible backup data but failed:\n{repr(E)}")
@@ -35,21 +34,21 @@ async def uploader(global_config, listener):
         logging.info(f"Uploader: Loaded {len(batch)} data points from backup.")
 
     async with aiohttp.ClientSession() as session:
-        db_ok = await check_database(config, session)
-        if not db_ok:
-            return
+        if not await check_database(config, session):
+            logging.warning(f"Uploader: InfluxDB database at {config['host']}:{config['port']} seems to be down.")
 
         parser = message_parser(global_config, listener)
 
         while True:
             while len(batch) < config["batch_size"]:
-                # This will block forever if queue remains empty:
+                # Await for an item coming from the parser
                 new_item = await parser.__anext__()
                 if new_item is END_QUEUE:
                     logging.info("Uploader: Got END_QUEUE.")
                     return
                 else:
                     batch.append(new_item)
+            # TODO: maybe split the following off into a separate function:
             if len(batch) > 0:
                 logging.debug("Uploader: Trying to upload batch.")
                 payload = "\n".join(batch)
@@ -70,12 +69,12 @@ async def uploader(global_config, listener):
                 else:
                     has_failed = True
                     if config["backup"]:
-                        logging.error("Uploader: Upload failed. Attempting backup...")
+                        logging.warning("Uploader: Upload failed. Attempting backup...")
                         backup_ok = store_backup(config, payload)
                         if backup_ok:
-                            logging.info(f"Uploader: Backed up data to {config["backup_file"]}.")
+                            logging.warning(f"Uploader: Backed up data to {config['backup_file']}.")
                         else:
-                            logging.error(f"Uploader: Failed to back up data to {config["backup_file"]}")
+                            logging.error(f"Uploader: Failed to back up data to {config['backup_file']}")
                     batch = []
 
     logging.info("Uploader: Shutting down.")
@@ -100,8 +99,11 @@ async def upload_influxdb(config, session, payload):
             else:
                 logging.error(f"Uploader: Failed to upload. Status code: {response.status}")
                 return False
+    except aiohttp.client_exceptions.ClientConnectorError:
+        logging.error(f"Uploader: Failed to connect to InfluxDB.")
+        return False
     except Exception:
-        logging.error(f"Uploader: Exception while uploading:\n{repr(E)}")
+        logging.error(f"Uploader: Unexpected error while uploading:\n{repr(E)}")
         return False
 
 
@@ -137,7 +139,7 @@ def load_backup(config):
     except Exception as E:
         return False, [], E
 
-    # Clear file
+    # Clear file if data was loaded successfully.
     with open(config["backup_file"], "w") as f:
         pass
     return True, batch, None
@@ -161,6 +163,9 @@ async def check_database(config, session):
                 return False
     except aiohttp.client_exceptions.ClientConnectorError:
         logging.error(f"Uploader: could not connect to InfluxDB server.")
+        return False
+    except Exception as E:
+        logging.error(f"Uploader: Unexpected error while uploading:\n{repr(E)}")
         return False
 
 
@@ -299,7 +304,8 @@ async def writer(config, listener):
 
 
 #
-# Debug outputter
+# Debug outputter. This can be used instead of the InfluxDB uploader for testing
+# the previous steps in the pipeline.
 #
 async def debug_output(config, listener):
     while True:
@@ -314,7 +320,8 @@ async def debug_output(config, listener):
 # Vaisala Serial listener
 #
 
-async def serial_listener(config, queue, shutdown):
+async def serial_listener(global_config):
+    config = global_config["listener"]["serial"]
     logging.info("Serial: Starting serial listener thread.")
     ser = await connect_serial(config)
     while True:
@@ -423,7 +430,7 @@ async def main(config):
     logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
     try:
-        await uploader(config, network_listener)
+        await asyncio.gather(uploader(config, network_listener))
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         loop = asyncio.get_event_loop()
