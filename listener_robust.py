@@ -1,16 +1,18 @@
 # Robust Vaisala listener, with error handling and backup buffer
 
-import toml
 import logging
 import sys
 
 import asyncio
 import aiohttp
 
-import time
 import re
+import toml
+import time
 from datetime import datetime
 from os.path import exists
+
+from server import DataContainer, MetCastProtocol, start_server
 
 # A special flag object to push into thread-shared queue to indicate soft shutdown request.
 END_QUEUE = object()
@@ -19,7 +21,7 @@ END_QUEUE = object()
 # InfluxDB uploader
 #
 
-async def uploader(global_config, listener):
+async def uploader(global_config, listener, container):
     """Collect data from queue and upload to InfluxDB or backup."""
     config = global_config["uploader"]
     batch = []
@@ -37,7 +39,7 @@ async def uploader(global_config, listener):
         if not await check_database(config, session):
             logging.warning(f"Uploader: InfluxDB database at {config['host']}:{config['port']} seems to be down.")
 
-        parser = message_parser(global_config, listener)
+        parser = message_parser(global_config, listener, container)
 
         while True:
             while len(batch) < config["batch_size"]:
@@ -102,9 +104,9 @@ async def upload_influxdb(config, session, payload):
     except aiohttp.client_exceptions.ClientConnectorError:
         logging.error(f"Uploader: Failed to connect to InfluxDB.")
         return False
-    except Exception:
-        logging.error(f"Uploader: Unexpected error while uploading:\n{repr(E)}")
-        return False
+    #except Exception:
+    #    logging.error(f"Uploader: Unexpected error while uploading:\n{repr(E)}")
+    #    return False
 
 
 def store_backup(config, payload):
@@ -164,9 +166,9 @@ async def check_database(config, session):
     except aiohttp.client_exceptions.ClientConnectorError:
         logging.error(f"Uploader: could not connect to InfluxDB server.")
         return False
-    except Exception as E:
-        logging.error(f"Uploader: Unexpected error while uploading:\n{repr(E)}")
-        return False
+    #except Exception as E:
+#        logging.error(f"Uploader: Unexpected error while checking DB:\n{repr(E)}")
+#        return False
 
 
 def load_config(filename):
@@ -178,7 +180,7 @@ def load_config(filename):
 # Vaisala message parser
 #
 
-async def message_parser(config, listener):
+async def message_parser(config, listener, container):
     """Get raw Vaisala data, verity and parse it into an InfluxDB message and pass on.
 
     Gets raw data from parser_queue.
@@ -189,7 +191,7 @@ async def message_parser(config, listener):
     logging.info("Parser: Starting thread.")
     my_config =  config["parser"]
     while True:
-        async for data in broadcaster(config, listener):
+        async for data in broadcaster(config, listener, container):
             if data == END_QUEUE:
                 logging.info("Parser: Encountered END_QUEUE.")
                 shutdown.set()
@@ -275,12 +277,16 @@ def format_match(data):
 
 
 #
-# Broadcast
+# Push data to broadcast server.
 #
-async def broadcaster(config, listener):
+async def broadcaster(global_config, listener, container):
+    config = global_config["broadcast"]
+    if config["active"] and container is None:
+        logging.error("Broadcaster: No container given. Unable to push data to server.")
     while True:
-        async for data in writer(config, listener):
-            # TODO All server stuff goes here
+        async for data in writer(global_config, listener):
+            if config["active"] and not (container is None):
+                await container.set(data)
             yield data
 
 
@@ -429,8 +435,16 @@ async def main(config):
     log_lvl = log_levels[config["common"].get("debug_level", "ALL")]
     logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
+    if config["broadcast"]["active"]:
+        container = DataContainer(asyncio.Condition())
+    else:
+        container = None
+
     try:
-        await asyncio.gather(uploader(config, network_listener))
+        await asyncio.gather(
+                uploader(config, network_listener, container),
+                start_server(config, container)
+        )
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         loop = asyncio.get_event_loop()

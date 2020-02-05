@@ -10,11 +10,9 @@
 
 debug_level = "ALL"
 source = "network"
-broadcast = true
 
 
 # SETTINGS FOR THE UPLOADER
-#
 
 [uploader]
 
@@ -29,17 +27,16 @@ backup_file = "backups.txt"
 
 
 # SETTINGS FOR LOCAL TCP/IP SERVER
-#
 
 [broadcast]
 
-# These settings are used if common.broadcast is set to true.
-port = 42222
+active = true
+port = 32222
 max_connections = 5
 
 
+
 # SETTINGS FOR THE LISTENER
-#
 
 [listener.network]
 
@@ -56,8 +53,8 @@ device = "/dev/ttyUSB0"
 timeout = 60
 
 
+
 # SETTINGS FOR THE PARSER
-#
 
 [parser.variables]
 
@@ -75,3 +72,13 @@ SNOWDEPTH = "snow_depth"
 
 # Any string variables defined here will be used as tags in the InfluxDB database.
 station = "vaisala"
+
+
+
+# SETTINGS FOR THE DISK WRITER
+
+[writer]
+
+active = false
+path = "./data"
+variables = ["PR"]
