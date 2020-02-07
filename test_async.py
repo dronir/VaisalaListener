@@ -18,7 +18,6 @@ class MetCastProtocol(asyncio.Protocol):
         self.task = loop.create_task(self.serve_data())
 
     def send(self, payload):
-        print(payload)
         self.transport.write(bytes(payload, "utf8"))
 
     def connection_lost(self, exc):
