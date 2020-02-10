@@ -21,7 +21,7 @@ END_QUEUE = object()
 # InfluxDB uploader
 #
 
-async def uploader(global_config, listener, container):
+async def uploader(global_config, listener):
     """Collect data from queue and upload to InfluxDB or backup."""
     config = global_config["uploader"]
     batch = []
@@ -39,7 +39,7 @@ async def uploader(global_config, listener, container):
         if not await check_database(config, session):
             logging.warning(f"Uploader: InfluxDB database at {config['host']}:{config['port']} seems to be down.")
 
-        parser = message_parser(global_config, listener, container)
+        parser = message_parser(global_config, listener)
 
         while True:
             while len(batch) < config["batch_size"]:
@@ -180,7 +180,7 @@ def load_config(filename):
 # Vaisala message parser
 #
 
-async def message_parser(global_config, listener, container):
+async def message_parser(global_config, listener):
     """Get raw Vaisala data, verity and parse it into an InfluxDB message and pass on.
 
     Gets raw data from parser_queue.
@@ -191,7 +191,7 @@ async def message_parser(global_config, listener, container):
     logging.info("Parser: Starting thread.")
     config =  global_config["parser"]
     while True:
-        async for data in broadcaster(global_config, listener, container):
+        async for data in broadcaster(global_config, listener):
             if data == END_QUEUE:
                 logging.info("Parser: Encountered END_QUEUE.")
                 shutdown.set()
@@ -279,8 +279,9 @@ def format_match(data):
 #
 # Push data to broadcast server.
 #
-async def broadcaster(global_config, listener, container):
+async def broadcaster(global_config, listener):
     config = global_config["broadcast"]
+    container = global_config.get("broadcast_container", None)
     if config["active"] and container is None:
         logging.error("Broadcaster: No container given. Unable to push data to server.")
     while True:
@@ -328,8 +329,8 @@ async def debug_output(config, listener):
 
 async def serial_listener(global_config):
     config = global_config["listener"]["serial"]
+    queue = global_config["serial_queue"]
     logging.info("Listener: Starting serial listener thread.")
-    source, writer = await connect_serial(config)
 
     while True:
         if source is None:
@@ -342,18 +343,10 @@ async def serial_listener(global_config):
                 await asyncio.sleep(timeout)
             continue
         try:
-            data = await source.readuntil(b')')
+            data = await queue.get()
             data = data.decode("utf-8")
         except asyncio.CancelledError:
             break
-        except asyncio.IncompleteReadError as E:
-            logging.error("Listener: Serial connection interrupted. Trying to reconnect.")
-            try:
-                writer.close()
-            except Exception:
-                pass
-            source = None
-            continue
         except Exception as E:
             logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
         if data:
@@ -364,17 +357,6 @@ async def serial_listener(global_config):
     writer.close()
     raise asyncio.CancelledError()
 
-
-async def connect_serial(config):
-    try:
-        reader, writer = await asyncio.open_connection(config["host"], config["port"])
-    except Exception as E:
-        logging.error(f"Listener: Unable to connect to serial interface {config['device']}.")
-        logging.error("{}".format(repr(E)))
-        return None, None
-    else:
-        logging.info(f"Listener: Connected to serial device {config['device']}")
-        return reader, writer
 
 
 
@@ -494,12 +476,21 @@ async def main(config):
 
     if config["broadcast"]["active"]:
         container = DataContainer(asyncio.Condition())
+        config["broadcast_container"] = container
     else:
         container = None
 
+    if config["common"]["source"] == "network":
+        listener = network_listener
+    elif config["common"]["source"] == "serial":
+        listener = serial_listener
+    else:
+        logging.error("Source is neither 'network' nor 'serial'.")
+        return
+
     try:
         await asyncio.gather(
-                uploader(config, network_listener, container),
+                uploader(config, listener),
                 start_server(config, container)
         )
     except KeyboardInterrupt:
