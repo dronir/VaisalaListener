@@ -224,7 +224,8 @@ def parse_data(config, raw_data):
             date_str = value
         elif key == "T":
             time_str = value
-        elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M", "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
+        elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M",
+                     "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
             fields[key] = float(value)
     time_ns = get_time_ns(date_str, time_str)
     tags = config.get("tags", {})
@@ -329,14 +330,17 @@ async def debug_output(config, listener):
 
 async def serial_listener(global_config):
     config = global_config["listener"]["serial"]
-    queue = global_config["serial_queue"]
+    #queue = global_config["serial_queue"]
+
     logging.info("Listener: Starting serial listener thread.")
 
+    queue = None
+
     while True:
-        if source is None:
+        if queue is None:
             logging.error("Listener: Not connected to listener. Trying to connect.")
-            source, writer = await connect_serial(config)
-            if source == None:
+            queue = connect_serial(config)
+            if queue == None:
                 # Still failing, wait for a while before trying again
                 timeout = config.get("timeout", 2)
                 logging.error(f"Listener: waiting {timeout} seconds before retry.")
@@ -344,6 +348,9 @@ async def serial_listener(global_config):
             continue
         try:
             data = await queue.get()
+            if data == END_QUEUE:
+                queue = None
+                continue
             data = data.decode("utf-8")
         except asyncio.CancelledError:
             break
@@ -359,26 +366,42 @@ async def serial_listener(global_config):
 
 
 
+def connect_serial(config):
+    loop = asyncio.get_event_loop()
+    baud = 9600
 
-class Output(asyncio.Protocol):
+    device = config.get("device", None)
+
+    queue = asyncio.Queue()
+    protocol_factory = lambda: SerialProtocol(queue)
+    try:
+        coro = serial_asyncio.create_serial_connection(loop, protocol_factory, device, baudrate=baud)
+        loop.run_forever(coro)
+    except Exception as E:
+        logging.error(f"Listener: Failed to connect serial: {repr(E)}")
+        return None
+    return queue
+
+
+class SerialProtocol(asyncio.Protocol):
     def __init__(self, queue, maxlength=256):
         self.queue = queue
         self.buffer = b""
         self.maxlength = maxlength
 
     def connection_made(self, transport):
+        logging.info("Listener: Serial connection established.")
         self.transport = transport
-        print('port opened', transport)
         transport.serial.rts = False
 
     def data_received(self, data):
         self.to_buffer(new_data)
-        out = self.trim_buffer(s)
+        out = self.trim_buffer(b")")
         if out:
             self.queue.put(out)
 
     def to_buffer(self, s):
-        self.buffer = b"".join(self.buffer, s)
+        self.buffer = b"".join([self.buffer, s])
 
     def trim_buffer(self, s):
         if s in self.buffer:
@@ -394,8 +417,10 @@ class Output(asyncio.Protocol):
             return b""
 
     def connection_lost(self, exc):
+        logging.error("Listener: Lost serial connection.")
+        self.queue.put(END_QUEUE)
         self.transport.close()
-        print('port closed')
+
 
 
 
