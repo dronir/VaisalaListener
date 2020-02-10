@@ -180,7 +180,7 @@ def load_config(filename):
 # Vaisala message parser
 #
 
-async def message_parser(config, listener, container):
+async def message_parser(global_config, listener, container):
     """Get raw Vaisala data, verity and parse it into an InfluxDB message and pass on.
 
     Gets raw data from parser_queue.
@@ -189,16 +189,16 @@ async def message_parser(config, listener, container):
     Then puts the resulting string into upload_queue.
     """
     logging.info("Parser: Starting thread.")
-    my_config =  config["parser"]
+    config =  global_config["parser"]
     while True:
-        async for data in broadcaster(config, listener, container):
+        async for data in broadcaster(global_config, listener, container):
             if data == END_QUEUE:
                 logging.info("Parser: Encountered END_QUEUE.")
                 shutdown.set()
                 break
             try:
                 if verify_data(data):
-                    parsed = parse_data(my_config, data)
+                    parsed = parse_data(config, data)
                     yield parsed
                 else:
                     logging.warning("Parser: Format check failed for received data:\n{}".format(data))
@@ -294,10 +294,10 @@ async def broadcaster(global_config, listener, container):
 #
 # Local writer (TODO: implement fully)
 #
-async def writer(config, listener):
+async def writer(global_config, listener):
     while True:
         try:
-            async for item in listener(config):
+            async for item in listener(global_config):
                 logging.debug(f"Writer: Got data: {item}")
                 # TODO: Write item to local
                 yield item
@@ -328,70 +328,32 @@ async def debug_output(config, listener):
 
 async def serial_listener(global_config):
     config = global_config["listener"]["serial"]
-    logging.info("Serial: Starting serial listener thread.")
-    ser = await connect_serial(config)
-    while True:
-        if ser is None:
-            logging.error("Serial: Not connected to serial device. Trying to reconnect.")
-            ser = await connect_serial(config)
-            await asyncio.sleep(1)
-            continue
-        try:
-            str = await serial_port.read_until(")", timeout=config.get("timeout", 60))
-        except asyncio.CancelledError:
-            break
-        except Exception as E:
-            logging.error("Serial: Error when reading serial device:\n{}".format(repr(E)))
-            logging.info("Serial: Trying to reconnect.")
-            ser.close()
-            ser = await connect_serial(config)
-            continue
-        # TODO: get only the part between parenthesis
-        yield str
-    logging.info("Serial: Shutting down.")
-    raise asyncio.CancelledError()
-
-async def connect_serial(config):
-    try:
-        ser = serial.Serial(port=config["device"], baudrate=9600, timeout=config.get("timeout", 60))
-    except Exception as E:
-        logging.error("Serial: Could not open serial device {}:\n{}".format(config["device"], repr(E)))
-        return None
-    else:
-        return ser
-
-
-
-#
-# Vaisala TCP/IP listener
-#
-
-async def network_listener(config):
-    my_config = config["listener"]["network"]
-    logging.info("Listener: Starting network listener thread.")
-    source, writer = await connect_source(my_config)
-    if source is None:
-        logging.info("Listener: We can't even start. Shutting down.")
-        raise asyncio.CancelledError()
-
+    logging.info("Listener: Starting serial listener thread.")
+    source, writer = await connect_serial(config)
 
     while True:
         if source is None:
             logging.error("Listener: Not connected to listener. Trying to connect.")
-            source, writer = await connect_source(my_config)
+            source, writer = await connect_serial(config)
             if source == None:
                 # Still failing, wait for a while before trying again
-                await asyncio.sleep(my_config.get("timeout", 2))
+                timeout = config.get("timeout", 2)
+                logging.error(f"Listener: waiting {timeout} seconds before retry.")
+                await asyncio.sleep(timeout)
             continue
         try:
             data = await source.readuntil(b')')
             data = data.decode("utf-8")
         except asyncio.CancelledError:
             break
-        except EOFError as E:
-            logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
-            writer.close()
-            source,writer = await connect_source(my_config)
+        except asyncio.IncompleteReadError as E:
+            logging.error("Listener: Serial connection interrupted. Trying to reconnect.")
+            try:
+                writer.close()
+            except Exception:
+                pass
+            source = None
+            continue
         except Exception as E:
             logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
         if data:
@@ -403,7 +365,102 @@ async def network_listener(config):
     raise asyncio.CancelledError()
 
 
-async def connect_source(config):
+async def connect_serial(config):
+    try:
+        reader, writer = await asyncio.open_connection(config["host"], config["port"])
+    except Exception as E:
+        logging.error(f"Listener: Unable to connect to serial interface {config['device']}.")
+        logging.error("{}".format(repr(E)))
+        return None, None
+    else:
+        logging.info(f"Listener: Connected to serial device {config['device']}")
+        return reader, writer
+
+
+
+class Output(asyncio.Protocol):
+    def __init__(self, queue, maxlength=256):
+        self.queue = queue
+        self.buffer = b""
+        self.maxlength = maxlength
+
+    def connection_made(self, transport):
+        self.transport = transport
+        print('port opened', transport)
+        transport.serial.rts = False
+
+    def data_received(self, data):
+        self.to_buffer(new_data)
+        out = self.trim_buffer(s)
+        if out:
+            self.queue.put(out)
+
+    def to_buffer(self, s):
+        self.buffer = b"".join(self.buffer, s)
+
+    def trim_buffer(self, s):
+        if s in self.buffer:
+            idx = self.buffer.index(s) + 1
+            out = self.buffer[:idx]
+            self.buffer = self.buffer[idx:]
+            return out
+        elif len(self.buffer) > self.maxlength:
+            out = self.buffer
+            self.buffer = b""
+            return out
+        else:
+            return b""
+
+    def connection_lost(self, exc):
+        self.transport.close()
+        print('port closed')
+
+
+
+#
+# Vaisala TCP/IP listener
+#
+
+async def network_listener(global_config):
+    config = global_config["listener"]["network"]
+    logging.info("Listener: Starting network listener thread.")
+    source, writer = await connect_network(config)
+
+    while True:
+        if source is None:
+            logging.error("Listener: Not connected to listener. Trying to connect.")
+            source, writer = await connect_network(config)
+            if source == None:
+                # Still failing, wait for a while before trying again
+                timeout = config.get("timeout", 2)
+                logging.error(f"Listener: waiting {timeout} seconds before retry.")
+                await asyncio.sleep(timeout)
+            continue
+        try:
+            data = await source.readuntil(b')')
+            data = data.decode("utf-8")
+        except asyncio.CancelledError:
+            break
+        except asyncio.IncompleteReadError as E:
+            logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
+            try:
+                writer.close()
+            except Exception:
+                pass
+            source = None
+            continue
+        except Exception as E:
+            logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
+        if data:
+            yield data
+        else:
+            logging.warning("Listener: No data received.")
+    logging.info("Listener: Shutting down.")
+    writer.close()
+    raise asyncio.CancelledError()
+
+
+async def connect_network(config):
     try:
         reader, writer = await asyncio.open_connection(config["host"], config["port"])
     except Exception as E:
