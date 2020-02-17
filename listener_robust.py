@@ -396,7 +396,7 @@ class SerialProtocol(asyncio.Protocol):
         transport.serial.rts = False
 
     def data_received(self, data):
-        self.to_buffer(new_data)
+        self.to_buffer(data)
         out = self.trim_buffer(b")")
         if out:
             self.queue.put(out)
