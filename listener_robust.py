@@ -331,32 +331,39 @@ async def debug_output(config, listener):
 
 async def serial_listener(global_config):
     config = global_config["listener"]["serial"]
-    #queue = global_config["serial_queue"]
 
     logging.info("Listener: Starting serial listener thread.")
 
-    queue = None
+    reader = None
+    writer = None
 
     while True:
-        if queue is None:
+        if reader is None:
             logging.error("Listener: Not connected to listener. Trying to connect.")
-            queue = connect_serial(config)
-            if queue == None:
+            reader, writer = await connect_serial(config)
+            if reader == None:
                 # Still failing, wait for a while before trying again
                 timeout = config.get("timeout", 2)
                 logging.error(f"Listener: waiting {timeout} seconds before retry.")
                 await asyncio.sleep(timeout)
             continue
+
         try:
-            data = await queue.get()
-            if data == END_QUEUE:
-                queue = None
-                continue
+            data = await reader.read_until(b")")
             data = data.decode("utf-8")
+        except asyncio.IncompleteReadError as E:
+            logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
+            try:
+                writer.close()
+            except Exception:
+                pass
+            source = None
+            continue
         except asyncio.CancelledError:
             break
         except Exception as E:
             logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
+
         if data:
             yield data
         else:
@@ -367,60 +374,19 @@ async def serial_listener(global_config):
 
 
 
-def connect_serial(config):
+async def connect_serial(config):
     loop = asyncio.get_event_loop()
     baud = 9600
 
     device = config.get("device", None)
 
-    queue = asyncio.Queue()
-    protocol_factory = lambda: SerialProtocol(queue)
     try:
-        coro = serial_asyncio.create_serial_connection(loop, protocol_factory, device, baudrate=baud)
-        loop.run_forever(coro)
+        reader, writer = await serial_asyncio.open_serial_connection(port=device, baudrate=baud)
     except Exception as E:
         logging.error(f"Listener: Failed to connect serial: {repr(E)}")
-        return None
-    return queue
+        return None, None
+    return reader, writer
 
-
-class SerialProtocol(asyncio.Protocol):
-    def __init__(self, queue, maxlength=256):
-        self.queue = queue
-        self.buffer = b""
-        self.maxlength = maxlength
-
-    def connection_made(self, transport):
-        logging.info("Listener: Serial connection established.")
-        self.transport = transport
-        transport.serial.rts = False
-
-    def data_received(self, data):
-        self.to_buffer(data)
-        out = self.trim_buffer(b")")
-        if out:
-            self.queue.put(out)
-
-    def to_buffer(self, s):
-        self.buffer = b"".join([self.buffer, s])
-
-    def trim_buffer(self, s):
-        if s in self.buffer:
-            idx = self.buffer.index(s) + 1
-            out = self.buffer[:idx]
-            self.buffer = self.buffer[idx:]
-            return out
-        elif len(self.buffer) > self.maxlength:
-            out = self.buffer
-            self.buffer = b""
-            return out
-        else:
-            return b""
-
-    def connection_lost(self, exc):
-        logging.error("Listener: Lost serial connection.")
-        self.queue.put(END_QUEUE)
-        self.transport.close()
 
 
 
@@ -444,6 +410,7 @@ async def network_listener(global_config):
                 logging.error(f"Listener: waiting {timeout} seconds before retry.")
                 await asyncio.sleep(timeout)
             continue
+
         try:
             data = await source.readuntil(b')')
             data = data.decode("utf-8")
@@ -459,6 +426,7 @@ async def network_listener(global_config):
             continue
         except Exception as E:
             logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
+            
         if data:
             yield data
         else:
@@ -491,8 +459,6 @@ log_levels = {
     "WARNINGS" : logging.WARNING,
     "ERRORS" : logging.ERROR
 }
-
-
 
 
 async def main(config):
