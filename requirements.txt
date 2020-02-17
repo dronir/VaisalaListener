@@ -1,3 +1,4 @@
 pytest
-requests
 toml
+pyserial-asyncio
+aiohttp
