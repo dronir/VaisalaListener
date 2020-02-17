@@ -334,8 +334,7 @@ async def serial_listener(global_config):
 
     logging.info("Listener: Starting serial listener thread.")
 
-    reader = None
-    writer = None
+    reader, writer = await connect_serial(config)
 
     while True:
         if reader is None:
