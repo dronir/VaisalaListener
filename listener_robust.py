@@ -5,6 +5,7 @@ import sys
 
 import asyncio
 import aiohttp
+import serial_asyncio
 
 import re
 import toml
