@@ -349,7 +349,7 @@ async def serial_listener(global_config):
             continue
 
         try:
-            data = await reader.read_until(b")")
+            data = await reader.readuntil(b")")
             data = data.decode("utf-8")
         except asyncio.IncompleteReadError as E:
             logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
@@ -381,7 +381,7 @@ async def connect_serial(config):
     device = config.get("device", None)
 
     try:
-        reader, writer = await serial_asyncio.open_serial_connection(port=device, baudrate=baud)
+        reader, writer = await serial_asyncio.open_serial_connection(url=device, baudrate=baud)
     except Exception as E:
         logging.error(f"Listener: Failed to connect serial: {repr(E)}")
         return None, None
