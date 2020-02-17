@@ -172,10 +172,7 @@ async def check_database(config, session):
 #        return False
 
 
-def load_config(filename):
-    """Load config from TOML file."""
-    with open(filename, "r") as f:
-        return toml.load(f)
+
 
 #
 # Vaisala message parser
@@ -458,6 +455,13 @@ log_levels = {
     "WARNINGS" : logging.WARNING,
     "ERRORS" : logging.ERROR
 }
+
+
+def load_config(filename):
+    """Load config from TOML file."""
+    with open(filename, "r") as f:
+        return toml.load(f)
+
 
 
 async def main(config):
