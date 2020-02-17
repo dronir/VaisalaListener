@@ -350,7 +350,7 @@ async def serial_listener(global_config):
 
         try:
             data = await reader.readuntil(b")")
-            data = data.decode("utf-8")
+            data = data.decode("utf-8").strip()
         except asyncio.IncompleteReadError as E:
             logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
             try:
@@ -426,7 +426,7 @@ async def network_listener(global_config):
             continue
         except Exception as E:
             logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
-            
+
         if data:
             yield data
         else:
