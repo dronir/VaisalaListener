@@ -15,9 +15,6 @@ from os.path import exists
 
 from server import DataContainer, MetCastProtocol, start_server
 
-# A special flag object to push into thread-shared queue to indicate soft shutdown request.
-END_QUEUE = object()
-
 #
 # InfluxDB uploader
 #
@@ -46,11 +43,7 @@ async def uploader(global_config, listener):
             while len(batch) < config["batch_size"]:
                 # Await for an item coming from the parser
                 new_item = await parser.__anext__()
-                if new_item is END_QUEUE:
-                    logging.info("Uploader: Got END_QUEUE.")
-                    return
-                else:
-                    batch.append(new_item)
+                batch.append(new_item)
             # TODO: maybe split the following off into a separate function:
             if len(batch) > 0:
                 logging.debug("Uploader: Trying to upload batch.")
@@ -190,10 +183,6 @@ async def message_parser(global_config, listener):
     config =  global_config["parser"]
     while True:
         async for data in broadcaster(global_config, listener):
-            if data == END_QUEUE:
-                logging.info("Parser: Encountered END_QUEUE.")
-                shutdown.set()
-                break
             try:
                 if verify_data(data):
                     parsed = parse_data(config, data)
@@ -316,9 +305,6 @@ async def writer(global_config, listener):
 async def debug_output(config, listener):
     while True:
         async for item in message_parser(config, listener):
-            if item == END_QUEUE:
-                logging.info("End of pipe got END_QUEUE.")
-                return
             logging.debug(f"End of pipe: {item}")
 
 
