@@ -33,7 +33,9 @@ async def uploader(global_config, listener):
     if len(batch) > 0:
         logging.info(f"Uploader: Loaded {len(batch)} data points from backup.")
 
-    async with aiohttp.ClientSession() as session:
+    credentials = aiohttp.BasicAuth(login=config["user"], password=config["password"])
+
+    async with aiohttp.ClientSession(auth=credentials) as session:
         if not await check_database(config, session):
             logging.warning(f"Uploader: InfluxDB database at {config['host']}:{config['port']} seems to be down.")
 
@@ -84,12 +86,12 @@ async def upload_influxdb(config, session, payload):
     """
     upload_url = build_http_url(config, "write")
     params = {
-        "db" : config["database"]
+        "db" : config["database"],
     }
     logging.debug(f"Uploader: Trying to upload with url {upload_url}")
 
     try:
-        async with session.post(upload_url, params=params, data=payload) as response:
+        async with session.post(upload_url, params=params, data=payload, ssl=False) as response:
             if response.status == 204:
                 return True
             else:
@@ -144,14 +146,14 @@ def load_backup(config):
 
 
 def build_http_url(config, path):
-    return "http://{host}:{port}/{path}".format(host=config["host"], port=config["port"], path=path)
+    return "https://{host}:{port}/{path}".format(host=config["host"], port=config["port"], path=path)
 
 
 async def check_database(config, session):
     """Ask InfluxDB database if it's up and running."""
     URL = build_http_url(config, "ping")
     try:
-        async with session.get(URL) as response:
+        async with session.get(URL, ssl=False) as response:
             if response.status == 204:
                 return True
             else:
