@@ -213,8 +213,7 @@ def parse_data(config, raw_data):
             date_str = value
         elif key == "T":
             time_str = value
-        elif key in ["TAAVG1M", "RHAVG1M", "DPAVG1M", "QFEAVG1M", "QFFAVG1M", "SRAVG1M",
-                     "SNOWDEPTH", "PR", "EXTDC", "STATUS", "PA", "SRRAVG1M", "WD", "WS"]:
+        elif key in config["include"]:
             fields[key] = float(value)
     time_ns = get_time_ns(date_str, time_str)
     tags = config.get("tags", {})

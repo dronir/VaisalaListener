@@ -19,10 +19,12 @@ source = "network"
 # Settings for the InfluxDB database uploader.
 host = "localhost"
 port = 8086
-database = "vaisalatest"
-batch_size = 3
+database = "testing"
+batch_size = 10
 backup = true
 backup_file = "backups.txt"
+user = ""
+password = "PASSWORD HERE"
 
 
 
@@ -56,6 +58,11 @@ timeout = 60
 
 # SETTINGS FOR THE PARSER
 
+[parser]
+
+include = ["PA", "WS", "WD", "TAAVG1M", "RHAVG1M", "DPAVG1M", "SRAVG1M", "SRRAVG1M", "PRFAVG1H", "SNOWDEPTH", "PR", "STATUS", "EXTDC"]
+rename = false
+
 [parser.variables]
 
 # These map variable names in the Vaisala broadcast to variables names
@@ -64,8 +71,13 @@ TAAVG1M = "temperature"
 PR = "pressure"
 WD = "wind_dir"
 WS = "wind_speed"
+RHAVG1M = "rel_humidity"
+DPAVG1M = "dew_point"
 SNOWDEPTH = "snow_depth"
-# TODO: add the rest
+SRAVG1M = "solar_incident"
+SRRAVG1M = "solar_reflected"
+PRFAVG1H = "precipitation"
+EXTDC = "supply_voltage"
 
 
 [parser.tags]
