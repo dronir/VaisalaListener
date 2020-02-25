@@ -34,7 +34,6 @@ password = "PASSWORD HERE"
 
 active = true
 port = 32222
-max_connections = 5
 
 
 
@@ -84,13 +83,3 @@ EXTDC = "supply_voltage"
 
 # Any string variables defined here will be used as tags in the InfluxDB database.
 station = "vaisala"
-
-
-
-# SETTINGS FOR THE DISK WRITER
-
-[writer]
-
-active = false
-path = "./data"
-variables = ["PR"]
