@@ -213,7 +213,7 @@ def parse_data(config, raw_data):
             date_str = value
         elif key == "T":
             time_str = value
-        elif key in config["include"]:
+        elif key in config["include"] and value != "///":
             fields[key] = float(value)
     time_ns = get_time_ns(date_str, time_str)
     tags = config.get("tags", {})
@@ -260,7 +260,7 @@ def has_time(data):
 
 def format_match(data):
     """Check if data string matches expected regular expression."""
-    m = re.fullmatch(r"\(\w+:\w+(;\w+:[\w\.\-]+)+\)", data)
+    m = re.fullmatch(r"\(\w+:\w+(;\w+:[\w\.\-(\/+)]+)+\)", data)
     return not (m is None)
 
 
