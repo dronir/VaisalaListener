@@ -409,9 +409,17 @@ async def network_listener(global_config):
             continue
         except ConnectionResetError:
             logging.error("Listener: Connection reset by peer. Retrying.")
+            try:
+                writer.close()
+            except:
+                pass
             source = None
         except Exception as E:
             logging.error(f"Listener: Unexpected error:\n{repr(E)}")
+            try:
+                writer.close()
+            except:
+                pass
             source = None
 
         if data:
