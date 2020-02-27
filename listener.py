@@ -407,8 +407,12 @@ async def network_listener(global_config):
                 pass
             source = None
             continue
+        except ConnectionResetError:
+            logging.error("Listener: Connection reset by peer. Retrying.")
+            source = None
         except Exception as E:
-            logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
+            logging.error(f"Listener: Unexpected error:\n{repr(E)}")
+            source = None
 
         if data:
             yield data
