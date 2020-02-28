@@ -45,7 +45,10 @@ async def uploader(global_config, listener):
             while len(batch) < config["batch_size"]:
                 # Await for an item coming from the parser
                 new_item = await parser.__anext__()
-                batch.append(new_item)
+                if new_item is None:
+                    continue
+                else:
+                    batch.append(new_item)
             # TODO: maybe split the following off into a separate function:
             if len(batch) > 0:
                 logging.debug("Uploader: Trying to upload batch.")
@@ -215,6 +218,9 @@ def parse_data(config, raw_data):
             time_str = value
         elif key in config["include"] and value != "///":
             fields[key] = float(value)
+    if len(fields) == 0:
+        return None
+
     time_ns = get_time_ns(date_str, time_str)
     tags = config.get("tags", {})
     if tags:
