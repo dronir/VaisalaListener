@@ -297,8 +297,8 @@ async def writer(global_config, listener):
                 logging.debug(f"Writer: Got data: {item}")
                 # TODO: Write item to local
                 yield item
-        except asyncio.CancelledError:
-            raise asyncio.CancelledError
+        except asyncio.CancelledError as E:
+            raise E
         except Exception as E:
             logging.error(f"Writer: {repr(E)}")
         await asyncio.sleep(1)
