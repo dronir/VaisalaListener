@@ -87,7 +87,7 @@ async def upload_influxdb(config, session, payload):
 
     `Config` is the "uploader" config subset.
     """
-    upload_url = build_http_url(config, "write")
+    upload_url = build_database_url(config, "write")
     params = {
         "db" : config["database"],
     }
@@ -148,7 +148,7 @@ def load_backup(config):
 
 
 
-def build_http_url(config, path):
+def build_database_url(config, path):
     host = config["host"]
     port = config["port"]
     protocol = "https" if config.get("SSL", True) else "http"
@@ -157,7 +157,7 @@ def build_http_url(config, path):
 
 async def check_database(config, session):
     """Ask InfluxDB database if it's up and running."""
-    URL = build_http_url(config, "ping")
+    URL = build_database_url(config, "ping")
     try:
         async with session.get(URL, ssl=False) as response:
             if response.status == 204:
@@ -521,7 +521,7 @@ def test_url_builder():
     "host" : "localhost",
     "port" : 80
     }
-    url = build_http_url(config, "test")
+    url = build_database_url(config, "test")
     assert url == "http://localhost:80/test"
 
 
