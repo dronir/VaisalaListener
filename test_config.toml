@@ -25,6 +25,7 @@ backup = true
 backup_file = "backups.txt"
 user = ""
 password = "PASSWORD HERE"
+SSL = false
 
 
 

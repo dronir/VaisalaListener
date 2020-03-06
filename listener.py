@@ -149,7 +149,10 @@ def load_backup(config):
 
 
 def build_http_url(config, path):
-    return "https://{host}:{port}/{path}".format(host=config["host"], port=config["port"], path=path)
+    host = config["host"]
+    port = config["port"]
+    protocol = "https" if config.get("SSL", True) else "http"
+    return f"{protocol}://{host}:{port}/{path}"
 
 
 async def check_database(config, session):
@@ -205,10 +208,10 @@ LINE_TEMPLATE = "weather{tags} {fields} {timestamp}"
 def parse_data(config, raw_data):
     """Parse raw data broadcast string into dictionary.
     Data is assumed to be in valid form (i.e. `verify_data` returns True on it).
+    Returns None if there are no valid values in the raw data message.
     """
     raw_data = raw_data.strip("()")
     data = raw_data.split(";")
-    point = {}
     fields = {}
     for pair in data:
         key, value = pair.split(":")
@@ -223,10 +226,7 @@ def parse_data(config, raw_data):
 
     time_ns = get_time_ns(date_str, time_str)
     tags = config.get("tags", {})
-    if tags:
-        tag_str = "," + str_from_dict(tags)
-    else:
-        tag_str = ""
+    tag_str = "," + str_from_dict(tags)  if tags else ""
     field_str = str_from_dict(fields)
     return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
 
