@@ -10,7 +10,7 @@ import serial_asyncio
 import re
 import toml
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from os.path import exists
 
 from server import DataContainer, MetCastProtocol, start_server
@@ -235,16 +235,19 @@ def str_from_dict(data):
     return ",".join(["{}={}".format(k, v) for (k,v) in data.items()])
 
 
+EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
 def datetime_to_ns(dt):
     """Convert datetime to nanoseconds from epoch."""
-    time_s = time.mktime(dt.timetuple())
+    time_s = (dt - EPOCH).total_seconds()
     return int(time_s * 1000000000)
 
 
 def get_time_ns(date_str, time_str):
     """Convert date and time strings into nanoseconds from epoch."""
-    time_dt = datetime.strptime("{} {}".format(date_str, time_str), "%y%m%d %H%M%S")
-    return datetime_to_ns(time_dt)
+    time_utc = datetime.strptime("{} {}".format(date_str, time_str), "%y%m%d %H%M%S")
+    time_utc = time_utc.replace(tzinfo=timezone.utc)
+    return datetime_to_ns(time_utc)
 
 
 def verify_data(data):
