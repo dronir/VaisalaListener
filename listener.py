@@ -90,6 +90,7 @@ async def upload_influxdb(config, session, payload):
     upload_url = build_database_url(config, "write")
     params = {
         "db" : config["database"],
+        "precision" : "ms"
     }
     logging.debug(f"Uploader: Trying to upload with url {upload_url}")
 
@@ -240,7 +241,7 @@ EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 def datetime_to_ns(dt):
     """Convert datetime to nanoseconds from epoch."""
     time_s = (dt - EPOCH).total_seconds()
-    return int(time_s * 1000000000)
+    return int(time_s * 1000)
 
 
 def get_time_ns(date_str, time_str):
