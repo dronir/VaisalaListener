@@ -192,6 +192,8 @@ async def message_parser(global_config, listener):
     config =  global_config["parser"]
     while True:
         async for data in broadcaster(global_config, listener):
+            match = re.search(r"\(.*\)", data)
+            data = match.group(0) if match else ""
             try:
                 if verify_data(data):
                     parsed = parse_data(config, data)
@@ -272,7 +274,7 @@ def has_time(data):
 
 def format_match(data):
     """Check if data string matches expected regular expression."""
-    m = re.fullmatch(r"\( *[\w]+: *[\w]+ *(; *[\w]+: *[\w\.\-(\/+) *]+)+\)", data)
+    m = re.fullmatch(r"\( *[\w]+ *: *[\w]+ *(; *[\w]+ *: *[\w\.\-(\/+) *]+)+\)", data)
     return not (m is None)
 
 
