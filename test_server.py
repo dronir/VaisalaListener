@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 
 
-LINE_TEMPLATE = """(S:MAWS;D:{};T:{};TAAVG1M:{};PA:{:.1f})"""
+LINE_TEMPLATE = """(S:MAWS;D:{};T:{};TAAVG1M:{};PA:{:.1f})1234"""
 
 
 class MetCastProtocol(asyncio.Protocol):
