@@ -216,6 +216,8 @@ def parse_data(config, raw_data):
     fields = {}
     for pair in data:
         key, value = pair.split(":")
+        key = key.strip()
+        value = value.strip()
         if key == "D":
             date_str = value
         elif key == "T":
@@ -270,7 +272,7 @@ def has_time(data):
 
 def format_match(data):
     """Check if data string matches expected regular expression."""
-    m = re.fullmatch(r"\([ \w]+:[\w ]+(;[\w ]+:[\w\.\-(\/+) ]+)+\)", data)
+    m = re.fullmatch(r"\( *[\w]+: *[\w]+ *(; *[\w]+: *[\w\.\-(\/+) *]+)+\)", data)
     return not (m is None)
 
 
