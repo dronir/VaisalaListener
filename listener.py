@@ -150,15 +150,18 @@ def load_backup(config):
 
 
 
-def build_database_url(config, path):
+def build_database_url(config, endpoint):
+    """Build url to InfluxDB database based on config variables and server endpoint.
+    """
     host = config["host"]
     port = config["port"]
     protocol = "https" if config.get("SSL", True) else "http"
-    return f"{protocol}://{host}:{port}/{path}"
+    return f"{protocol}://{host}:{port}/{endpoint}"
 
 
 async def check_database(config, session):
-    """Ask InfluxDB database if it's up and running."""
+    """Ask InfluxDB database if it's up and running.
+    """
     URL = build_database_url(config, "ping")
     try:
         async with session.get(URL, ssl=False) as response:
@@ -184,10 +187,10 @@ async def check_database(config, session):
 async def message_parser(global_config, listener):
     """Get raw Vaisala data, verity and parse it into an InfluxDB message and pass on.
 
-    Gets raw data from parser_queue.
-    Checks the format.
-    If the checks pass, parses the raw data into the InfluxDB line format.
-    Then puts the resulting string into upload_queue.
+    - Gets raw data from "broadcaster" generator.
+    - Checks the format.
+    - If the checks pass, parses the raw data into the InfluxDB line format.
+    - Then yields the parsed data down the pipeline.
     """
     logging.info("Parser: Starting thread.")
     config =  global_config["parser"]
@@ -282,9 +285,21 @@ def format_match(data):
 
 
 #
-# Push data to broadcast server.
+# Split data to broadcast server.
 #
 async def broadcaster(global_config, listener):
+    """Split incoming data to a broadcast server if desired.
+
+    If broadcast is off, this generator just reads the data from the "writer"
+    and yields it down the pipeline.
+
+    If broadcast is on, the data is put into a container. The broadcast server
+    running simultaneously will read the container whenever it updates and gives
+    the data to any connected clients.
+
+    Server settings are given in the "broadcast" subset of the global config.
+
+    """
     config = global_config["broadcast"]
     container = global_config.get("broadcast_container", None)
     if config["active"] and container is None:
@@ -298,9 +313,13 @@ async def broadcaster(global_config, listener):
 
 
 #
-# Local writer (TODO: implement fully)
+# Local writer (TODO: implement fully if desired)
 #
 async def writer(global_config, listener):
+    """This would be a module to write incoming data to a local file if deried.
+    Currently it does nothing: only reads data from the listener and yields it
+    down the pipeline.
+    """
     while True:
         try:
             async for item in listener(global_config):
@@ -320,6 +339,9 @@ async def writer(global_config, listener):
 # the previous steps in the pipeline.
 #
 async def debug_output(config, listener):
+    """This is meant to replace the uploader for degunning the upstream pipeline.
+    It reads data from the parser and prints it to the debug output.
+    """
     while True:
         async for item in message_parser(config, listener):
             logging.debug(f"End of pipe: {item}")
@@ -374,9 +396,9 @@ async def serial_listener(global_config):
 
 
 async def connect_serial(config):
-    loop = asyncio.get_event_loop()
+    """Create new connection to the weather over serial cable.
+    """
     baud = 9600
-
     device = config.get("device", None)
 
     try:
@@ -448,6 +470,8 @@ async def network_listener(global_config):
 
 
 async def connect_network(config):
+    """Create a new connection to the weather station over local network.
+    """
     try:
         reader, writer = await asyncio.open_connection(config["host"], config["port"])
     except Exception as E:
@@ -484,12 +508,14 @@ async def main(config):
     log_lvl = log_levels[config["common"].get("debug_level", "ALL")]
     logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
+    # Create a broadcast server if configured to do so.
     if config["broadcast"]["active"]:
         container = DataContainer(asyncio.Condition())
         config["broadcast_container"] = container
     else:
         container = None
 
+    # Choose the listener function based on config.
     if config["common"]["source"] == "network":
         listener = network_listener
     elif config["common"]["source"] == "serial":
@@ -498,11 +524,16 @@ async def main(config):
         logging.error("Source is neither 'network' nor 'serial'.")
         return
 
+    # Create task list with uploader process.
+    tasks = [await uploader(config, listener)]
+
+    # Create server process and add to task list if broadcast is active.
+    if config["broadcast"]["active"]:
+        tasks.append(await start_server(config, container))
+
+    # Start the tasks in the task list. Quit on KeyboardInterrupt.
     try:
-        await asyncio.gather(
-                uploader(config, listener),
-                start_server(config, container)
-        )
+        await asyncio.gather(**tasks)
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         loop = asyncio.get_event_loop()
