@@ -20,7 +20,8 @@ from server import DataContainer, MetCastProtocol, start_server
 #
 
 async def uploader(global_config, listener):
-    """Collect data from queue and upload to InfluxDB or backup."""
+    """Collect data from queue and upload to InfluxDB or backup.
+    """
     config = global_config["uploader"]
     batch = []
     has_failed = False
@@ -53,7 +54,7 @@ async def uploader(global_config, listener):
             if len(batch) > 0:
                 logging.debug("Uploader: Trying to upload batch.")
                 payload = "\n".join(batch)
-                logging.debug("Uploader: Payload:\n{}".format(payload))
+                logging.debug(f"Uploader: Payload:\n{payload}")
                 success = await upload_influxdb(config, session, payload)
                 if success:
                     logging.debug("Uploader: Upload successful.")
@@ -83,7 +84,7 @@ async def uploader(global_config, listener):
 
 
 async def upload_influxdb(config, session, payload):
-    """Upload given payload to InfluxDB instance.
+    """Upload given payload to InfluxDB instance using given `aiohttp.ClientSession`.
 
     `Config` is the "uploader" config subset.
     """
@@ -199,9 +200,9 @@ async def message_parser(global_config, listener):
                     parsed = parse_data(config, data)
                     yield parsed
                 else:
-                    logging.warning("Parser: Format check failed for received data:\n{}".format(data))
+                    logging.warning(f"Parser: Format check failed for received data:\n{data}")
             except Exception as E:
-                logging.error("Parser: Unexpected error:\n{}".format(repr(E)))
+                logging.error(f"Parser: Unexpected error:\n{repr(E)}")
         logging.warning("Parser: Data stream ended.")
         await asyncio.sleep(1)
     logging.info("Parser: Shutting down.")
@@ -236,7 +237,8 @@ def parse_data(config, raw_data):
     return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
 
 def str_from_dict(data):
-    """Turn a dict into a string of comma-separated key=value pairs."""
+    """Turn a dict into a string of comma-separated key=value pairs.
+    """
     return ",".join(["{}={}".format(k, v) for (k,v) in data.items()])
 
 
@@ -250,7 +252,7 @@ def datetime_to_ns(dt):
 
 def get_time_ns(date_str, time_str):
     """Convert date and time strings into nanoseconds from epoch."""
-    time_utc = datetime.strptime("{} {}".format(date_str, time_str), "%y%m%d %H%M%S")
+    time_utc = datetime.strptime(f"{date_str} {time_str}", "%y%m%d %H%M%S")
     time_utc = time_utc.replace(tzinfo=timezone.utc)
     return datetime_to_ns(time_utc)
 
@@ -359,7 +361,7 @@ async def serial_listener(global_config):
         except asyncio.CancelledError:
             break
         except Exception as E:
-            logging.error("Listener: Unexpected error:\n{}".format(repr(E)))
+            logging.error(f"Listener: Unexpected error:\n{repr(E)}")
 
         if data:
             yield data
@@ -450,7 +452,7 @@ async def connect_network(config):
         reader, writer = await asyncio.open_connection(config["host"], config["port"])
     except Exception as E:
         logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**config))
-        logging.error("{}".format(repr(E)))
+        logging.error(f"{repr(E)}")
         return None, None
     else:
         logging.info("Listener: Connected to Vaisala computer at {host}:{port}".format(**config))
@@ -527,7 +529,8 @@ if __name__=="__main__":
 def test_url_builder():
     config = {
     "host" : "localhost",
-    "port" : 80
+    "port" : 80,
+    "SSL" : False
     }
     url = build_database_url(config, "test")
     assert url == "http://localhost:80/test"
@@ -538,7 +541,7 @@ def test_str_from_dict():
     params = {
         "foo" : 80,
         "bar" : "test",
-        "baz" : 1.2
+        "baz" : 1.2,
     }
     s = str_from_dict(params)
 
