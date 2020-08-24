@@ -352,6 +352,13 @@ async def debug_output(config, listener):
 #
 
 async def serial_listener(global_config):
+    """Listen to data broadcast over serial connection.
+
+    Create a new serial connection to the weather station, then while the
+    connection is up, listen to data and send it down the pipeline.
+
+    Most of this function is just error handling.
+    """
     config = global_config["listener"]["serial"]
 
     logging.info("Listener: Starting serial listener thread.")
@@ -417,6 +424,13 @@ async def connect_serial(config):
 #
 
 async def network_listener(global_config):
+    """Listen to data broadcast over TCP/IP.
+
+    Create a new network connection to the weather station, then while the
+    connection is up, listen to data and send it down the pipeline.
+
+    Most of this function is just error handling.
+    """
     config = global_config["listener"]["network"]
     logging.info("Listener: Starting network listener thread.")
     source, writer = await connect_network(config)
@@ -504,21 +518,25 @@ def load_config(filename):
 
 
 async def main(config):
+    common_config = config["common"]
+    broadcast_config = config["broadcast"]
+
+    # Set up debug printing, defaulting to "ALL"
+    log_lvl = log_levels[common_config.get("debug_level", "ALL")]
     log_format = "%(asctime)s %(levelname)s %(message)s"
-    log_lvl = log_levels[config["common"].get("debug_level", "ALL")]
     logging.basicConfig(format=log_format, level=log_lvl, datefmt="%H:%M:%S")
 
-    # Create a broadcast server if configured to do so.
-    if config["broadcast"]["active"]:
+    # Create a broadcast server and a data container if broadcast is active.
+    if broadcast_config["active"]:
         container = DataContainer(asyncio.Condition())
         config["broadcast_container"] = container
     else:
         container = None
 
     # Choose the listener function based on config.
-    if config["common"]["source"] == "network":
+    if common_config["source"] == "network":
         listener = network_listener
-    elif config["common"]["source"] == "serial":
+    elif common_config["source"] == "serial":
         listener = serial_listener
     else:
         logging.error("Source is neither 'network' nor 'serial'.")
@@ -528,7 +546,7 @@ async def main(config):
     tasks = [await uploader(config, listener)]
 
     # Create server process and add to task list if broadcast is active.
-    if config["broadcast"]["active"]:
+    if broadcast_config["active"]:
         tasks.append(await start_server(config, container))
 
     # Start the tasks in the task list. Quit on KeyboardInterrupt.
@@ -541,6 +559,7 @@ async def main(config):
 
 
 if __name__=="__main__":
+    """Entry point of the progrma. Read config from file and call main function."""
     config = load_config(sys.argv[1])
     try:
         asyncio.run(main(config))
