@@ -385,6 +385,7 @@ async def serial_listener(global_config):
                 writer.close()
             except Exception:
                 pass
+            reader = None
             continue
         except asyncio.CancelledError:
             break
