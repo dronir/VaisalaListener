@@ -385,7 +385,6 @@ async def serial_listener(global_config):
                 writer.close()
             except Exception:
                 pass
-            source = None
             continue
         except asyncio.CancelledError:
             break
@@ -549,9 +548,9 @@ async def main(config):
     if broadcast_config["active"]:
         tasks.append(await start_server(config, container))
 
-    # Start the tasks in the task list. Quit on KeyboardInterrupt.
+    # Start the in the task list. Quit on KeyboardInterrupt.
     try:
-        await asyncio.gather(**tasks)
+        await asyncio.gather(*tasks)
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         loop = asyncio.get_event_loop()
