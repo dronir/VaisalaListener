@@ -44,3 +44,14 @@ Run `python listener.py config.toml` to start the program. Press `ctrl-c` to qui
 
 The behaviour of the program is determined by the config file. See `test_config.toml`
 for an example.
+
+## Testing
+
+To test the system:
+
+- Run an InfluxDB server on your local machine, with a database called `vaisala`.
+- Run `python test_server.py`, which will create a TCP/IP server emulating a data source.
+- Run the main program with the example config file (`python listener.py test_config.toml`)
+
+This should connect to the test server, receive and process the data and write it to your
+InfluxDB database.
