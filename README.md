@@ -1,6 +1,10 @@
 
 # Vaisala weather station data uploader
 
+> **Disclaimer**: this is mostly a hack written for a specific purpose, without too much
+> knowledge of the actual workings of the hardware it interfaces with, not in any way
+> associated with Vaisala, and comes with absolutely no promises of support, stability, etc.
+
 This is a tool for connecting to a Vaisala automatic weather station, listening to the
 data broadcast, and uploading the data to an InfluxDB database.
 
