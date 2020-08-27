@@ -2,46 +2,62 @@
 
 [common]
 
+debug_level = "ALL"
+source = "network"
+
 # debug_level can be ALL, INFO, WARNINGS, or ERRORS.
 #  ALL prints debug messages, routine information, warnings and errors.
 #  INFO prints routube information and higher.
 #  WARNINGS prints only warnings and errors.
 #  ERRORS prints only error messages.
 
-debug_level = "ALL"
-source = "network"
 
 
-# SETTINGS FOR THE UPLOADER
 
 [uploader]
 
-# Settings for the InfluxDB database uploader.
+# Here, you set the host and port of your target database server, as well
+# as your login credentials.
+
 host = "localhost"
 port = 8086
-database = "testing"
-batch_size = 10
-backup = true
-backup_file = "backups.txt"
+SSL = false
 user = ""
 password = "PASSWORD HERE"
-SSL = false
+
+# Here, you give the name of the database on the InfluxDB server.
+# Batch size determines how many individual data points are collected before
+# uploading them as a batch.
+
+database = "testing"
+batch_size = 10
+
+# Whether to use local backup cache if upload fails. If backup = false, any data 
+# will simply be discarded once an upload fails. Also set a path to the local 
+# backup file.
+
+backup = true
+backup_file = "backups.txt"
 
 
 
-# SETTINGS FOR LOCAL TCP/IP SERVER
+
+
 
 [broadcast]
+
+# Will we serve the incoming data via a TCP/IP server and if yes, on what port?
 
 active = true
 port = 32222
 
 
 
-# SETTINGS FOR THE LISTENER
+
 
 [listener.network]
 
+# The address, port, and timeout of a TCP/IP server for receiving data.
 # These settings are used when common.source is set to "network"
 host = "localhost"
 port = 42222
@@ -50,23 +66,30 @@ timeout = 10
 
 [listener.serial]
 
+# The device address and timeout of a serial device for receiving data.
 # These settings are used when common.source is set to "serial".
 device = "/dev/ttyUSB0"
 timeout = 60
 
 
 
-# SETTINGS FOR THE PARSER
 
 [parser]
+
+# Which variables in the incoming data broadcast will be passed on to the
+# InfluxDB database. Also by setting `rename`, these variable names can be
+# renamed for the InfluxDB database (see below).
 
 include = ["PA", "WS", "WD", "TAAVG1M", "RHAVG1M", "DPAVG1M", "SRAVG1M", "SRRAVG1M", "PRFAVG1H", "SNOWDEPTH", "PR", "STATUS", "EXTDC"]
 rename = false
 
+
+
 [parser.variables]
 
 # These map variable names in the Vaisala broadcast to variables names
-# in the InfluxDB database.
+# in the InfluxDB database. The mapping will be done if `rename` is true above.
+
 TAAVG1M = "temperature"
 PR = "pressure"
 WD = "wind_dir"
@@ -80,7 +103,9 @@ PRFAVG1H = "precipitation"
 EXTDC = "supply_voltage"
 
 
+
 [parser.tags]
 
 # Any string variables defined here will be used as tags in the InfluxDB database.
+
 station = "vaisala"
