@@ -49,7 +49,7 @@ for an example.
 
 To test the system:
 
-- Run an InfluxDB server on your local machine, with a database called `vaisala`.
+- Run an InfluxDB server on your local machine, with a database called `testing`.
 - Run `python test_server.py`, which will create a TCP/IP server emulating a data source.
 - Run the main program with the example config file (`python listener.py test_config.toml`)
 
