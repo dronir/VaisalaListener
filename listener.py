@@ -235,7 +235,7 @@ def parse_data(config, raw_data):
 
     time_ns = get_time_ns(date_str, time_str)
     tags = config.get("tags", {})
-    tag_str = "," + str_from_dict(tags)  if tags else ""
+    tag_str = "," + str_from_dict(tags) if tags else ""
     field_str = str_from_dict(fields)
     return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
 
