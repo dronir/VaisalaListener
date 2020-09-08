@@ -542,16 +542,15 @@ async def main(config):
         logging.error("Source is neither 'network' nor 'serial'.")
         return
 
-    # Create task list with uploader process.
-    tasks = [await uploader(config, listener)]
-
-    # Create server process and add to task list if broadcast is active.
-    if broadcast_config["active"]:
-        tasks.append(await start_server(config, container))
-
-    # Start the in the task list. Quit on KeyboardInterrupt.
+    # Start the necessary tasks. Quit on KeyboardInterrupt.
     try:
-        await asyncio.gather(*tasks)
+        if broadcast_config["active"]:
+            await asyncio.gather(
+                uploader(config, listener),
+                start_server(config, container)
+            )
+        else:
+            await uploader(config, listener)
     except KeyboardInterrupt:
         logging.info("Trying to shut down gracefully.")
         loop = asyncio.get_event_loop()
