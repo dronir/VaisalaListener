@@ -228,8 +228,11 @@ def parse_data(config, raw_data):
             date_str = value
         elif key == "T":
             time_str = value
-        elif key in config["include"] and value != "///":
-            fields[key] = float(value)
+        elif key in config["include"] and not re.fullmatch(r"\/+", value):
+            try:
+                fields[key] = float(value)
+            except ValueError:
+                continue
     if len(fields) == 0:
         return None
 
@@ -279,7 +282,7 @@ def has_time(data):
 
 def format_match(data):
     """Check if data string matches expected regular expression."""
-    m = re.fullmatch(r"\( *[\w]+ *: *[\w]+ *(; *[\w]+ *: *[\w\.\-(\/+) *]+)+\)", data)
+    m = re.fullmatch(r"\( *[\w]+ *: *[\w]+ *(; *[\w]+ *: *[\w\.\-(\/+) *]*)+\)", data)
     return not (m is None)
 
 
