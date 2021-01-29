@@ -34,7 +34,7 @@ down and do various things with it:
   it yields it onwards and starts reading more.
 - The _writer_ gets the data from the listener, and would write the data onto a local drive,
   if turned on in the config. This part is currently not implemented since it was
-  not needed, and it simply gets the data from the listener.
+  not needed, and it currently just gets the data from the listener and passes it on unchanged.
 - The next step is the _broadcaster_. This essentially creates a server similar to the weather
   station's own TCP/IP broadcast for mirroring, serving the data to connected clients.
 - The _parser_ takes the data, which so far is in the format used by the weather station,
