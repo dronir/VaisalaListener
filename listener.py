@@ -339,7 +339,7 @@ async def writer(global_config, listener):
 # the previous steps in the pipeline.
 #
 async def debug_output(config, listener):
-    """This is meant to replace the uploader for degunning the upstream pipeline.
+    """This is meant to replace the uploader for debugging the upstream pipeline.
     It reads data from the parser and prints it to the debug output.
     """
     while True:
