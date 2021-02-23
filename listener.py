@@ -173,9 +173,6 @@ async def check_database(config, session):
     except aiohttp.client_exceptions.ClientConnectorError:
         logging.error(f"Uploader: could not connect to InfluxDB server.")
         return False
-    #except Exception as E:
-#        logging.error(f"Uploader: Unexpected error while checking DB:\n{repr(E)}")
-#        return False
 
 
 
@@ -531,7 +528,7 @@ async def main(config):
 
     # Create a broadcast server and a data container if broadcast is active.
     if broadcast_config["active"]:
-        container = DataContainer(asyncio.Condition())
+        container = DataContainer()
         config["broadcast_container"] = container
     else:
         container = None
@@ -561,7 +558,7 @@ async def main(config):
 
 
 if __name__=="__main__":
-    """Entry point of the progrma. Read config from file and call main function."""
+    """Entry point of the program. Read config from file and call main function."""
     config = load_config(sys.argv[1])
     try:
         asyncio.run(main(config))

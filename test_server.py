@@ -3,47 +3,11 @@ import time
 import logging
 from datetime import datetime
 
+from server import MetCastProtocol, DataContainer
 
 LINE_TEMPLATE = """(S:MAWS;D:{};T:{};  TAAVG1M:{};PA:   {:.1f};FOO:;BAR://///)1234"""
 
 
-class MetCastProtocol(asyncio.Protocol):
-    def __init__(self, container):
-        self.container = container
-
-    def connection_made(self, transport):
-        print("New connection.")
-        self.transport = transport
-        loop = asyncio.get_event_loop()
-        self.task = loop.create_task(self.serve_data())
-
-    def send(self, payload):
-        self.transport.write(bytes(payload, "utf8"))
-
-    def connection_lost(self, exc):
-        print("Connection lost.")
-        self.task.cancel()
-        self.transport.close()
-
-    async def serve_data(self):
-        while True:
-            async with self.container.lock:
-                await self.container.lock.wait()
-                data = await self.container.get()
-            print(f"Serving: {data}")
-            self.send(data)
-
-class DataContainer:
-    def __init__(self, lock):
-        self.value = ""
-        self.lock = lock
-    async def get(self):
-        return self.value
-    async def set(self, value):
-        async with self.lock:
-            print(f"Container: set value: {value}")
-            self.value = value
-            self.lock.notify_all()
 
 
 async def data_producer():
@@ -85,8 +49,7 @@ async def start_server(container):
         await server.serve_forever()
 
 async def main():
-    cond = asyncio.Condition()
-    container = DataContainer(cond)
+    container = DataContainer()
     await asyncio.gather(start_server(container), data_consumer(container))
 
 if __name__=="__main__":
