@@ -5,6 +5,8 @@ import logging
 class MetCastProtocol(asyncio.Protocol):
     def __init__(self, container):
         self.container = container
+        self.transport = None
+        self.task = None
 
     def connection_made(self, transport):
         """When a client connects, start a task that writes data to the transport
