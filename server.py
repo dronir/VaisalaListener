@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+
 class MetCastProtocol(asyncio.Protocol):
     def __init__(self, container):
         self.container = container
@@ -9,7 +10,7 @@ class MetCastProtocol(asyncio.Protocol):
         """When a client connects, start a task that writes data to the transport
         every time the container is updated.
         """
-        peername = transport.get_extra_info('peername')
+        peername = transport.get_extra_info("peername")
         logging.info(f"Server: New connection from {peername}.")
         self.transport = transport
         loop = asyncio.get_event_loop()
@@ -34,12 +35,10 @@ class MetCastProtocol(asyncio.Protocol):
             self.transport.write(bytes(data, "utf8"))
 
     def connection_lost(self, exc):
-        """When a client disconnects, kill the uploader task and close the transport.
-        """
+        """When a client disconnects, kill the uploader task and close the transport."""
         logging.info("Server: Connection lost.")
         self.task.cancel()
         self.transport.close()
-
 
 
 class DataContainer:
@@ -48,6 +47,7 @@ class DataContainer:
     the waiting processes will be notified and can get the new value.
     This lets us do stuff with the value every time it changes, and only when it changes.
     """
+
     def __init__(self):
         self.value = ""
         self.condition = asyncio.Condition()
@@ -56,8 +56,7 @@ class DataContainer:
         return self.value
 
     async def set(self, value):
-        """Acquire condition lock, update value, notify all tasks that wait for update.
-        """
+        """Acquire condition lock, update value, notify all tasks that wait for update."""
         # Reminder for future self part 2:
         # - Entering the `async with` block acquires the condition's lock (waiting if necessary).
         # - We update the value in the container.
@@ -70,12 +69,13 @@ class DataContainer:
             self.condition.notify_all()
 
 
-
 async def start_server(global_config, container):
     config = global_config["broadcast"]
     loop = asyncio.get_running_loop()
-    server = await loop.create_server(lambda: MetCastProtocol(container), "", config["port"])
+    server = await loop.create_server(
+        lambda: MetCastProtocol(container), "", config["port"]
+    )
     addr = server.sockets[0].getsockname()
-    logging.info(f'Server: Starting TCP serving on {addr}.')
+    logging.info(f"Server: Starting TCP serving on {addr}.")
     async with server:
         await server.serve_forever()
