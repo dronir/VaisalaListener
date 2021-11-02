@@ -3,7 +3,7 @@ from datetime import datetime
 
 from server import MetCastProtocol, DataContainer
 
-LINE_TEMPLATE = """(S:MAWS;D:{};T:{};  TAAVG1M:{};PA:   {:.1f};FOO:;BAR://///)1234"""
+LINE_TEMPLATE = """(S:MAWS;D:{};T : {};  TAAVG1M:{};PA:   {:.1f};FOO:;BAR://///)1234"""
 
 
 async def data_producer():
