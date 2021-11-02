@@ -267,13 +267,13 @@ def verify_data(data):
 
 def has_date(data):
     """Check if data has a date string."""
-    m = re.search(r"D:\d{6}", data)
+    m = re.search(r"D\s*:\s*\d{6}", data)
     return not (m is None)
 
 
 def has_time(data):
     """Check if data has a time string."""
-    m = re.search(r"T:\d{6}", data)
+    m = re.search(r"T\s*:\s*\d{6}", data)
     return not (m is None)
 
 
