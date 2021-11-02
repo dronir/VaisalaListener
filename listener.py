@@ -535,6 +535,7 @@ async def main(config):
     # Start the necessary tasks. Quit on KeyboardInterrupt.
     try:
         if broadcast_config["active"]:
+            assert container is not None # for type checking, we know this is true here
             await asyncio.gather(uploader(config, listener), start_server(config, container))
         else:
             await uploader(config, listener)
