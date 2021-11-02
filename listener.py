@@ -5,32 +5,32 @@ import sys
 
 import asyncio
 import aiohttp
-import serial_asyncio
+import serial_asyncio  # type: ignore
 
 import re
 import toml
-import time
 from datetime import datetime, timezone
 from os.path import exists
+from typing import Optional, List, Tuple, AsyncGenerator, Callable
 
-from server import DataContainer, MetCastProtocol, start_server
+from server import DataContainer, start_server
 
 #
 # InfluxDB uploader
 #
 
-async def uploader(global_config, listener):
-    """Collect data from queue and upload to InfluxDB or backup.
-    """
+
+async def uploader(global_config: dict, listener: Callable) -> None:
+    """Collect data from queue and upload to InfluxDB or backup."""
     config = global_config["uploader"]
-    batch = []
+
     has_failed = False
     logging.info("Uploader: Starting up uploader thread.")
 
     # Check if there's backup data from previous runs
-    backup_ok, batch, E = load_backup(config)
+    backup_ok, batch, exc = load_backup(config)
     if not backup_ok:
-        logging.error(f"Uploader: Tried to load possible backup data but failed:\n{repr(E)}")
+        logging.error(f"Uploader: Tried to load possible backup data but failed:\n{repr(exc)}")
     if len(batch) > 0:
         logging.info(f"Uploader: Loaded {len(batch)} data points from backup.")
 
@@ -38,7 +38,9 @@ async def uploader(global_config, listener):
 
     async with aiohttp.ClientSession(auth=credentials) as session:
         if not await check_database(config, session):
-            logging.warning(f"Uploader: InfluxDB database at {config['host']}:{config['port']} seems to be down.")
+            logging.warning(
+                f"Uploader: Can't reach InfluxDB database at {config['host']}:{config['port']}."
+            )
 
         parser = message_parser(global_config, listener)
 
@@ -61,38 +63,34 @@ async def uploader(global_config, listener):
                     batch = []
                     if has_failed:
                         logging.info("Uploader: Trying to read backup buffer.")
-                        load_success, batch, E = load_backup(config)
+                        load_success, batch, exc = load_backup(config)
                         if load_success:
                             logging.info(f"Uploader: Found {len(batch)} items in backup.")
                             has_failed = False
                         else:
-                            logging.error(f"Uploader: Failed to read backup buffer:\n{repr(E)}")
+                            logging.error(f"Uploader: Failed to read backup buffer:\n{repr(exc)}")
 
                 else:
                     has_failed = True
                     if config["backup"]:
                         logging.warning("Uploader: Upload failed. Attempting backup...")
-                        backup_ok = store_backup(config, payload)
+                        backup_ok, exc = store_backup(config, payload)
                         if backup_ok:
                             logging.warning(f"Uploader: Backed up data to {config['backup_file']}.")
                         else:
-                            logging.error(f"Uploader: Failed to back up data to {config['backup_file']}")
+                            logging.error(
+                                f"Uploader: Failed to back up data to {config['backup_file']}"
+                            )
                     batch = []
 
-    logging.info("Uploader: Shutting down.")
 
-
-
-async def upload_influxdb(config, session, payload):
+async def upload_influxdb(config: dict, session: aiohttp.ClientSession, payload: str) -> bool:
     """Upload given payload to InfluxDB instance using given `aiohttp.ClientSession`.
 
     `Config` is the "uploader" config subset.
     """
     upload_url = build_database_url(config, "write")
-    params = {
-        "db" : config["database"],
-        "precision" : "ms"
-    }
+    params = {"db": config["database"], "precision": "ms"}
     logging.debug(f"Uploader: Trying to upload with url {upload_url}")
 
     try:
@@ -102,15 +100,15 @@ async def upload_influxdb(config, session, payload):
             else:
                 logging.error(f"Uploader: Failed to upload. Status code: {response.status}")
                 return False
-    except aiohttp.client_exceptions.ClientConnectorError:
-        logging.error(f"Uploader: Failed to connect to InfluxDB.")
+    except aiohttp.ClientConnectorError:
+        logging.error("Uploader: Failed to connect to InfluxDB.")
         return False
-    #except Exception:
+    # except Exception:
     #    logging.error(f"Uploader: Unexpected error while uploading:\n{repr(E)}")
     #    return False
 
 
-def store_backup(config, payload):
+def store_backup(config: dict, payload: str) -> Tuple[bool, Optional[Exception]]:
     """Store the given payload in a text file.
 
     `Config` is the "uploader" config subset.
@@ -125,7 +123,7 @@ def store_backup(config, payload):
         return True, None
 
 
-def load_backup(config):
+def load_backup(config: dict) -> Tuple[bool, List[str], Optional[Exception]]:
     """Retrieve a payload from backup text file.
 
     `Config` is the "uploader" config subset.
@@ -143,45 +141,40 @@ def load_backup(config):
         return False, [], E
 
     # Clear file if data was loaded successfully.
-    with open(config["backup_file"], "w") as f:
+    with open(config["backup_file"], "w") as _:
         pass
     return True, batch, None
 
 
-
-
-def build_database_url(config, endpoint):
-    """Build url to InfluxDB database based on config variables and server endpoint.
-    """
+def build_database_url(config: dict, endpoint: str) -> str:
+    """Build url to InfluxDB database based on config variables and server endpoint."""
     host = config["host"]
     port = config["port"]
     protocol = "https" if config.get("SSL", True) else "http"
     return f"{protocol}://{host}:{port}/{endpoint}"
 
 
-async def check_database(config, session):
-    """Ask InfluxDB database if it's up and running.
-    """
-    URL = build_database_url(config, "ping")
+async def check_database(config: dict, session: aiohttp.ClientSession) -> bool:
+    """Ask InfluxDB database if it's up and running."""
+    url = build_database_url(config, "ping")
     try:
-        async with session.get(URL, ssl=False) as response:
+        async with session.get(url, ssl=False) as response:
             if response.status == 204:
                 return True
             else:
                 logging.error(f"Uploader: Data. Status code: {response.status}")
                 return False
-    except aiohttp.client_exceptions.ClientConnectorError:
-        logging.error(f"Uploader: could not connect to InfluxDB server.")
+    except aiohttp.ClientConnectorError:
+        logging.error("Uploader: could not connect to InfluxDB server.")
         return False
-
-
 
 
 #
 # Vaisala message parser
 #
 
-async def message_parser(global_config, listener):
+
+async def message_parser(global_config: dict, listener: Callable) -> AsyncGenerator:
     """Get raw Vaisala data, verity and parse it into an InfluxDB message and pass on.
 
     - Gets raw data from "broadcaster" generator.
@@ -190,7 +183,7 @@ async def message_parser(global_config, listener):
     - Then yields the parsed data down the pipeline.
     """
     logging.info("Parser: Starting thread.")
-    config =  global_config["parser"]
+    config = global_config["parser"]
     while True:
         async for data in broadcaster(global_config, listener):
             match = re.search(r"\(.*\)", data)
@@ -205,11 +198,12 @@ async def message_parser(global_config, listener):
                 logging.error(f"Parser: Unexpected error:\n{repr(E)}")
         logging.warning("Parser: Data stream ended.")
         await asyncio.sleep(1)
-    logging.info("Parser: Shutting down.")
+
 
 LINE_TEMPLATE = "weather{tags} {fields} {timestamp}"
 
-def parse_data(config, raw_data):
+
+def parse_data(config: dict, raw_data: str) -> Optional[str]:
     """Parse raw data broadcast string into dictionary.
     Data is assumed to be in valid form (i.e. `verify_data` returns True on it).
     Returns None if there are no valid values in the raw data message.
@@ -217,6 +211,7 @@ def parse_data(config, raw_data):
     raw_data = raw_data.strip("()")
     data = raw_data.split(";")
     fields = {}
+    date_str = time_str = ""
     for pair in data:
         key, value = pair.split(":")
         key = key.strip()
@@ -225,7 +220,7 @@ def parse_data(config, raw_data):
             date_str = value
         elif key == "T":
             time_str = value
-        elif key in config["include"] and not re.fullmatch(r"\/+", value):
+        elif key in config["include"] and not re.fullmatch(r"/+", value):
             try:
                 fields[key] = float(value)
             except ValueError:
@@ -239,55 +234,55 @@ def parse_data(config, raw_data):
     field_str = str_from_dict(fields)
     return LINE_TEMPLATE.format(tags=tag_str, fields=field_str, timestamp=time_ns)
 
-def str_from_dict(data):
-    """Turn a dict into a string of comma-separated key=value pairs.
-    """
-    return ",".join(["{}={}".format(k, v) for (k,v) in data.items()])
+
+def str_from_dict(data: dict) -> str:
+    """Turn a dict into a string of comma-separated key=value pairs."""
+    return ",".join(["{}={}".format(k, v) for (k, v) in data.items()])
 
 
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-def datetime_to_ns(dt):
+
+def datetime_to_ns(dt: datetime) -> int:
     """Convert datetime to nanoseconds from epoch."""
     time_s = (dt - EPOCH).total_seconds()
     return int(time_s * 1000)
 
 
-def get_time_ns(date_str, time_str):
+def get_time_ns(date_str: str, time_str: str) -> int:
     """Convert date and time strings into nanoseconds from epoch."""
     time_utc = datetime.strptime(f"{date_str} {time_str}", "%y%m%d %H%M%S")
     time_utc = time_utc.replace(tzinfo=timezone.utc)
     return datetime_to_ns(time_utc)
 
 
-def verify_data(data):
+def verify_data(data: str) -> bool:
     """Does data pass various format checks?"""
     return format_match(data) and has_date(data) and has_time(data)
 
 
-def has_date(data):
+def has_date(data: str) -> bool:
     """Check if data has a date string."""
     m = re.search(r"D\s*:\s*\d{6}", data)
     return not (m is None)
 
 
-def has_time(data):
+def has_time(data: str) -> bool:
     """Check if data has a time string."""
     m = re.search(r"T\s*:\s*\d{6}", data)
     return not (m is None)
 
 
-def format_match(data):
+def format_match(data: str) -> bool:
     """Check if data string matches expected regular expression."""
     m = re.fullmatch(r"\(\s*(?:[\w]+\s*:[^;]*)(?:;\s*[\w]+\s*:[^;]*?)*\)", data)
     return not (m is None)
 
 
-
 #
 # Split data to broadcast server.
 #
-async def broadcaster(global_config, listener):
+async def broadcaster(global_config: dict, listener: Callable) -> AsyncGenerator:
     """Split incoming data to a broadcast server if desired.
 
     If broadcast is off, this generator just reads the data from the "writer"
@@ -311,11 +306,10 @@ async def broadcaster(global_config, listener):
             yield data
 
 
-
 #
 # Local writer (TODO: implement fully if desired)
 #
-async def writer(global_config, listener):
+async def writer(global_config: dict, listener: Callable) -> AsyncGenerator:
     """This would be a module to write incoming data to a local file if deried.
     Currently it does nothing: only reads data from the listener and yields it
     down the pipeline.
@@ -333,12 +327,11 @@ async def writer(global_config, listener):
         await asyncio.sleep(1)
 
 
-
 #
 # Debug outputter. This can be used instead of the InfluxDB uploader for testing
 # the previous steps in the pipeline.
 #
-async def debug_output(config, listener):
+async def debug_output(config: dict, listener: Callable) -> None:
     """This is meant to replace the uploader for debugging the upstream pipeline.
     It reads data from the parser and prints it to the debug output.
     """
@@ -351,7 +344,8 @@ async def debug_output(config, listener):
 # Vaisala Serial listener
 #
 
-async def serial_listener(global_config):
+
+async def serial_listener(global_config: dict) -> AsyncGenerator:  # type: ignore
     """Listen to data broadcast over serial connection.
 
     Create a new serial connection to the weather station, then while the
@@ -369,7 +363,7 @@ async def serial_listener(global_config):
         if reader is None:
             logging.error("Listener: Not connected to listener. Trying to connect.")
             reader, writer = await connect_serial(config)
-            if reader == None:
+            if reader is None:
                 # Still failing, wait for a while before trying again
                 timeout = config.get("timeout", 2)
                 logging.error(f"Listener: waiting {timeout} seconds before retry.")
@@ -379,8 +373,10 @@ async def serial_listener(global_config):
         try:
             data = await reader.readuntil(b")")
             data = data.decode("utf-8").strip()
-        except asyncio.IncompleteReadError as E:
-            logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
+        except asyncio.IncompleteReadError:
+            logging.error(
+                "Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect."
+            )
             try:
                 writer.close()
             except Exception:
@@ -391,6 +387,7 @@ async def serial_listener(global_config):
             break
         except Exception as E:
             logging.error(f"Listener: Unexpected error:\n{repr(E)}")
+            continue
 
         if data:
             yield data
@@ -401,10 +398,8 @@ async def serial_listener(global_config):
     raise asyncio.CancelledError()
 
 
-
-async def connect_serial(config):
-    """Create new connection to the weather over serial cable.
-    """
+async def connect_serial(config: dict):
+    """Create new connection to the weather over serial cable."""
     baud = 9600
     device = config.get("device", None)
 
@@ -416,14 +411,12 @@ async def connect_serial(config):
     return reader, writer
 
 
-
-
-
 #
 # Vaisala TCP/IP listener
 #
 
-async def network_listener(global_config):
+
+async def network_listener(global_config: dict) -> AsyncGenerator:
     """Listen to data broadcast over TCP/IP.
 
     Create a new network connection to the weather station, then while the
@@ -434,62 +427,61 @@ async def network_listener(global_config):
     config = global_config["listener"]["network"]
     logging.info("Listener: Starting network listener thread.")
     source, writer = await connect_network(config)
-
+    data: Optional[str] = None
     while True:
         if source is None:
             logging.error("Listener: Not connected to listener. Trying to connect.")
             source, writer = await connect_network(config)
-            if source == None:
+            if source is None:
                 # Still failing, wait for a while before trying again
                 timeout = config.get("timeout", 2)
                 logging.error(f"Listener: waiting {timeout} seconds before retry.")
                 await asyncio.sleep(timeout)
             continue
-
+        # Asserts for type checking. At this point both source and writer
+        # should not be None, because we got out of the previous loop.
+        assert source is not None
+        assert writer is not None
         try:
-            data = await source.readuntil(b')')
-            data = data.decode("utf-8")
+            raw_data = await source.readuntil(b")")
+            data = raw_data.decode("utf-8")
         except asyncio.CancelledError:
             break
-        except asyncio.IncompleteReadError as E:
-            logging.error("Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect.")
-            try:
-                writer.close()
-            except Exception:
-                pass
+        except asyncio.IncompleteReadError:
+            logging.error(
+                "Listener: Connection to Vaisala broadcast interrupted. Trying to reconnect."
+            )
+            writer.close()
             source = None
             continue
         except ConnectionResetError:
             logging.error("Listener: Connection reset by peer. Retrying.")
-            try:
-                writer.close()
-            except:
-                pass
+            writer.close()
             source = None
         except Exception as E:
             logging.error(f"Listener: Unexpected error:\n{repr(E)}")
-            try:
-                writer.close()
-            except:
-                pass
+            writer.close()
             source = None
-
         if data:
             yield data
         else:
             logging.warning("Listener: No data received.")
     logging.info("Listener: Shutting down.")
-    writer.close()
+    if writer is not None:
+        writer.close()
     raise asyncio.CancelledError()
 
 
-async def connect_network(config):
-    """Create a new connection to the weather station over local network.
-    """
+async def connect_network(
+    config: dict,
+) -> Tuple[Optional[asyncio.StreamReader], Optional[asyncio.StreamWriter]]:
+    """Create a new connection to the weather station over local network."""
     try:
         reader, writer = await asyncio.open_connection(config["host"], config["port"])
     except Exception as E:
-        logging.error("Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**config))
+        logging.error(
+            "Listener: Unable to connect to Vaisala computer at {host}:{port}.".format(**config)
+        )
         logging.error(f"{repr(E)}")
         return None, None
     else:
@@ -497,16 +489,15 @@ async def connect_network(config):
         return reader, writer
 
 
-
 #
 # Main function
 #
 
 log_levels = {
-    "ALL" : logging.DEBUG,
-    "INFO" : logging.INFO,
-    "WARNINGS" : logging.WARNING,
-    "ERRORS" : logging.ERROR
+    "ALL": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNINGS": logging.WARNING,
+    "ERRORS": logging.ERROR,
 }
 
 
@@ -514,7 +505,6 @@ def load_config(filename):
     """Load config from TOML file."""
     with open(filename, "r") as f:
         return toml.load(f)
-
 
 
 async def main(config):
@@ -528,7 +518,7 @@ async def main(config):
 
     # Create a broadcast server and a data container if broadcast is active.
     if broadcast_config["active"]:
-        container = DataContainer()
+        container: Optional[DataContainer] = DataContainer()
         config["broadcast_container"] = container
     else:
         container = None
@@ -545,10 +535,7 @@ async def main(config):
     # Start the necessary tasks. Quit on KeyboardInterrupt.
     try:
         if broadcast_config["active"]:
-            await asyncio.gather(
-                uploader(config, listener),
-                start_server(config, container)
-            )
+            await asyncio.gather(uploader(config, listener), start_server(config, container))
         else:
             await uploader(config, listener)
     except KeyboardInterrupt:
@@ -557,7 +544,7 @@ async def main(config):
         loop.stop()
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     """Entry point of the program. Read config from file and call main function."""
     config = load_config(sys.argv[1])
     try:
@@ -568,29 +555,24 @@ if __name__=="__main__":
         logging.info("User requested shutdown.")
 
 
-
-###
-### TESTS
-###
+#
+# TESTS
+#
 
 # Run tests with command line: python -m pytest listener_robust.py
 
+
 def test_url_builder():
-    config = {
-    "host" : "localhost",
-    "port" : 80,
-    "SSL" : False
-    }
+    config = {"host": "localhost", "port": 80, "SSL": False}
     url = build_database_url(config, "test")
     assert url == "http://localhost:80/test"
 
 
-
 def test_str_from_dict():
     params = {
-        "foo" : 80,
-        "bar" : "test",
-        "baz" : 1.2,
+        "foo": 80,
+        "bar": "test",
+        "baz": 1.2,
     }
     s = str_from_dict(params)
 
@@ -601,7 +583,7 @@ def test_str_from_dict():
         "bar=test,foo=80,baz=1.2",
         "bar=test,baz=1.2,foo=80",
         "baz=1.2,foo=80,bar=test",
-        "baz=1.2,bar=test,foo=80"
+        "baz=1.2,bar=test,foo=80",
     ]
     assert s in alternatives
 
@@ -612,21 +594,23 @@ def test_has_date():
     assert not has_date("(M:FOO;D:14018;B:1.0)")
     assert not has_date("(M:FOO;T:140518;B:1.0)")
 
+
 def test_has_time():
-    assert has_time("(M:FOO;T:140518;B:1.0)")
-    assert has_time("(M:FOO;T:140518;B)")
+    assert has_time("(M:FOO;T:140518 ;B: 1.0)")
+    assert has_time("(M:FOO;T : 140518;B)")
     assert not has_time("(M:FOO;T:14018;B:1.0)")
     assert not has_time("(M:FOO;D:140518;B:1.0)")
 
+
 def test_format():
-    assert format_match("(S:FOO;PA:1000;FOO:123)")
+    assert format_match("(T:123456;D : 123456;S:FOO;PA:1000;FOO:123)")
     assert not format_match("(S:FOO;PA:1000;FOO:123")
     assert not format_match("S:FOO;PA:1000;FOO:123)")
-    assert not format_match("(S:FOO,PA:1000;FOO:123)")
+    assert not format_match("(S:FOO, PA:1000;  FOO:123)")
 
 
 def test_data_verify():
-    assert verify_data("(S:FOO;T:101018;D:010128;PA:1000)")
+    assert verify_data("(S:FOO;T:101018;D : 010128;PA:1000)")
     assert not verify_data("(S:FOO;T:101018;D:010128;PA:1000")
     assert not verify_data("S:FOO;T:101018;D:010128;PA:1000)")
     assert not verify_data("(S:FOO,T:101018;D:010128;PA:1000)")
