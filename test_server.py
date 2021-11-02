@@ -38,9 +38,7 @@ def create_data(n):
 
 async def start_server(container):
     loop = asyncio.get_running_loop()
-    server = await loop.create_server(
-        lambda: MetCastProtocol(container), "127.0.0.1", 42222
-    )
+    server = await loop.create_server(lambda: MetCastProtocol(container), "127.0.0.1", 42222)
     addr = server.sockets[0].getsockname()
     print(f"Serving on {addr}. Press ctrl-c to quit.")
 
