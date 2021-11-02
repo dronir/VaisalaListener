@@ -11,7 +11,7 @@ import re
 import toml
 from datetime import datetime, timezone
 from os.path import exists
-from typing import Optional, List, Tuple, AsyncGenerator, Callable
+from typing import Optional, List, Tuple, AsyncGenerator, Callable, Union
 
 from server import DataContainer, start_server
 
@@ -28,9 +28,10 @@ async def uploader(global_config: dict, listener: Callable) -> None:
     logging.info("Uploader: Starting up uploader thread.")
 
     # Check if there's backup data from previous runs
-    backup_ok, batch, exc = load_backup(config)
-    if not backup_ok:
-        logging.error(f"Uploader: Tried to load possible backup data but failed:\n{repr(exc)}")
+    batch: List[str] = []
+    backup = load_backup(config)
+    if backup is not None:
+        batch = backup
     if len(batch) > 0:
         logging.info(f"Uploader: Loaded {len(batch)} data points from backup.")
 
@@ -63,24 +64,19 @@ async def uploader(global_config: dict, listener: Callable) -> None:
                     batch = []
                     if has_failed:
                         logging.info("Uploader: Trying to read backup buffer.")
-                        load_success, batch, exc = load_backup(config)
-                        if load_success:
+                        backup = load_backup(config)
+                        if backup is not None:
+                            batch = backup
                             logging.info(f"Uploader: Found {len(batch)} items in backup.")
                             has_failed = False
-                        else:
-                            logging.error(f"Uploader: Failed to read backup buffer:\n{repr(exc)}")
 
                 else:
                     has_failed = True
                     if config["backup"]:
                         logging.warning("Uploader: Upload failed. Attempting backup...")
-                        backup_ok, exc = store_backup(config, payload)
-                        if backup_ok:
+                        maybe_exc = store_backup(config, payload)
+                        if maybe_exc is None:
                             logging.warning(f"Uploader: Backed up data to {config['backup_file']}.")
-                        else:
-                            logging.error(
-                                f"Uploader: Failed to back up data to {config['backup_file']}"
-                            )
                     batch = []
 
 
@@ -103,12 +99,9 @@ async def upload_influxdb(config: dict, session: aiohttp.ClientSession, payload:
     except aiohttp.ClientConnectorError:
         logging.error("Uploader: Failed to connect to InfluxDB.")
         return False
-    # except Exception:
-    #    logging.error(f"Uploader: Unexpected error while uploading:\n{repr(E)}")
-    #    return False
 
 
-def store_backup(config: dict, payload: str) -> Tuple[bool, Optional[Exception]]:
+def store_backup(config: dict, payload: str) -> Optional[Exception]:
     """Store the given payload in a text file.
 
     `Config` is the "uploader" config subset.
@@ -118,12 +111,15 @@ def store_backup(config: dict, payload: str) -> Tuple[bool, Optional[Exception]]
             f.write(payload)
             f.write("\n")
     except Exception as E:
-        return False, E
+        logging.error(
+            f"Uploader: Failed to back up data to {config['backup_file']}. This data was lost."
+        )
+        return E
     else:
-        return True, None
+        return None
 
 
-def load_backup(config: dict) -> Tuple[bool, List[str], Optional[Exception]]:
+def load_backup(config: dict) -> Optional[List[str]]:
     """Retrieve a payload from backup text file.
 
     `Config` is the "uploader" config subset.
@@ -131,19 +127,20 @@ def load_backup(config: dict) -> Tuple[bool, List[str], Optional[Exception]]:
     batch = []
     try:
         if not exists(config["backup_file"]):
-            return True, [], None
+            return []
         with open(config["backup_file"], "r") as f:
             for line in f:
                 sline = line.strip()
                 if len(sline) > 0:
                     batch.append(sline)
-    except Exception as E:
-        return False, [], E
+    except Exception as exc:
+        logging.error(f"Uploader: Failed to read backup buffer:\n{repr(exc)}")
+        return None
 
     # Clear file if data was loaded successfully.
     with open(config["backup_file"], "w") as _:
         pass
-    return True, batch, None
+    return batch
 
 
 def build_database_url(config: dict, endpoint: str) -> str:
@@ -474,7 +471,7 @@ async def network_listener(global_config: dict) -> AsyncGenerator:
 
 async def connect_network(
     config: dict,
-) -> Tuple[Optional[asyncio.StreamReader], Optional[asyncio.StreamWriter]]:
+) -> Union[Tuple[asyncio.StreamReader, asyncio.StreamWriter], Tuple[None, None]]:
     """Create a new connection to the weather station over local network."""
     try:
         reader, writer = await asyncio.open_connection(config["host"], config["port"])
